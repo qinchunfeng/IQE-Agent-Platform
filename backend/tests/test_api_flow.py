@@ -193,42 +193,30 @@ def test_dashboard_and_experiments():
         }
 
 
-def test_airflow_without_delegation_uses_memory_orchestrator():
+def test_airflow_is_input_source_and_pipeline_defaults_to_memory():
     with TestClient(app) as client:
         plugins = client.get("/api/plugins?check_health=false").json()["categories"]
         airflow = next(
             plugin
             for category in plugins
             for plugin in category["plugins"]
-            if plugin["plugin_id"] == "airflow_orchestrator"
+            if plugin["plugin_id"] == "airflow_input"
         )
-        assert airflow["capabilities"]["agent_callback"] is False
+        assert airflow["plugin_type"] == "input_source"
+        assert airflow["capabilities"]["polling"] is True
+        assert "dag_ids" in airflow["config_schema"]
 
-        enabled = client.post("/api/plugins/airflow_orchestrator/enable")
-        assert enabled.status_code == 200, enabled.text
-        configured = client.post(
-            "/api/plugins/airflow_orchestrator/config",
-            json={
-                "config": {
-                    "api_url": "http://127.0.0.1:18080",
-                    "username": "",
-                    "password": "",
-                    "dag_id_prefix": "",
-                    "delegate_execution": False,
-                    "timeout_seconds": 10,
-                }
-            },
+        pipelines = client.get("/api/pipelines").json()["items"]
+        definition = pipelines[0]["definition"]
+        assert definition["orchestrator"] == "memory_orchestrator"
+        assert definition["sources"][0]["plugin_id"] == "mock_jenkins"
+
+        payload = _push(client, "IQE-CASE-001")
+        trace = _wait_trace(
+            client, payload["trace_id"], {"completed", "failed", "rejected"}
         )
-        assert configured.status_code == 200, configured.text
-        try:
-            payload = _push(client, "IQE-CASE-001")
-            trace = _wait_trace(
-                client, payload["trace_id"], {"completed", "failed", "rejected"}
-            )
-            assert trace["run"]["orchestrator_used"] == "memory_orchestrator"
-            assert "执行委托" in (trace["run"]["fallback_reason"] or "")
-        finally:
-            client.post("/api/plugins/airflow_orchestrator/disable")
+        assert trace["run"]["orchestrator_used"] == "memory_orchestrator"
+        assert trace["run"]["input_source"] == "mock_jenkins"
 
 
 def test_optional_bearer_token(monkeypatch):
@@ -295,6 +283,12 @@ def test_agent_prompt_plugin_config_and_stage_override():
             assert monitor_event["payload"]["prompt_source"] == "stage"
             assert monitor_event["payload"]["prompt_version"]
             assert len(monitor_event["payload"]["prompt_hash"]) == 12
+            assert monitor_event["payload"]["prompt_text"] == "STAGE MONITOR PROMPT"
+            monitor_stage = next(
+                stage for stage in trace["stages"] if stage["agent"] == "monitor_agent"
+            )
+            assert monitor_stage["prompt"] == "STAGE MONITOR PROMPT"
+            assert monitor_stage["prompt_source"] == "stage"
         finally:
             if original_stage_prompt is None:
                 definition["stages"][0].pop("system_prompt", None)

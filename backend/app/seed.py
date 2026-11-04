@@ -1,22 +1,30 @@
 """预置流水线模板。
 
-逐字对齐文档 4.2 的 IQE 流水线组合示例(字段与顺序不变)。
-文档 4.2 与场景 4 对“默认编排器”存在矛盾(C1):这里保留 4.2 的
-airflow_orchestrator,运行时按文档 7.4 自动降级到内置编排器。
+逐字对齐文档 4.2 的 IQE 流水线组合示例(Agent 字段与顺序不变)。
+【已确认 Q24】Airflow 改为输入源插件,默认编排器统一为内置 memory_orchestrator;
+默认输入源保留 Mock Jenkins,Airflow/外部日志文件由画布按需添加。
 """
 
 from __future__ import annotations
 
 from . import db
-from .services.pipeline_service import DEFAULT_PIPELINE_ID
+from .services.pipeline_service import DEFAULT_PIPELINE_ID, normalize_definition
 
 DEFAULT_PIPELINE: dict = {
     "pipeline_id": DEFAULT_PIPELINE_ID,
-    "orchestrator": "airflow_orchestrator",
+    "orchestrator": "memory_orchestrator",
+    "sources": [
+        {
+            "source_id": "mock_jenkins",
+            "plugin_id": "mock_jenkins",
+            "label": "Jenkins / Mock Jenkins",
+            "enabled": True,
+        }
+    ],
     "stages": [
         {
             "agent": "monitor_agent",
-            "input_source": "jenkins_webhook",
+            "input_source": "mock_jenkins",
             "llm_provider": "qoder_cn",
             "knowledge_base": None,
         },
@@ -50,5 +58,11 @@ DEFAULT_PIPELINE: dict = {
 
 
 def seed_default_pipeline() -> None:
-    if db.get_pipeline(DEFAULT_PIPELINE_ID) is None:
+    record = db.get_pipeline(DEFAULT_PIPELINE_ID)
+    if record is None:
         db.save_pipeline(DEFAULT_PIPELINE)
+        return
+    # 旧 Demo 数据库迁移:airflow_orchestrator → memory_orchestrator,并补齐输入源节点。
+    normalized = normalize_definition(record["definition"])
+    if normalized != record["definition"]:
+        db.save_pipeline(normalized)

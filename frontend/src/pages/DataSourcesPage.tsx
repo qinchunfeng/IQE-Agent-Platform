@@ -4,7 +4,7 @@ import { api } from "../api";
 import { Icon } from "../Icon";
 import { Badge, EmptyState, SectionCard, Spinner } from "../components/Ui";
 import { useToast } from "../Toast";
-import type { DemoCase, PluginInfo } from "../types";
+import type { AirflowDag, DemoCase, PluginInfo } from "../types";
 import { GROUP_LABELS } from "../utils";
 
 const FILTERS = [
@@ -50,21 +50,38 @@ const SCENES = [
 export function DataSourcesPage() {
   const [cases, setCases] = useState<DemoCase[]>([]);
   const [plugin, setPlugin] = useState<PluginInfo | null>(null);
+  const [airflow, setAirflow] = useState<PluginInfo | null>(null);
+  const [fileSource, setFileSource] = useState<PluginInfo | null>(null);
+  const [dags, setDags] = useState<AirflowDag[]>([]);
   const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pushing, setPushing] = useState<string | null>(null);
+  const [polling, setPolling] = useState<string | null>(null);
+  const [uploadName, setUploadName] = useState("external_error.log");
+  const [uploadText, setUploadText] = useState("");
+  const [uploading, setUploading] = useState(false);
   const navigate = useNavigate();
   const { showToast } = useToast();
 
   const load = useCallback(async () => {
     try {
-      const [caseResult, pluginResult] = await Promise.all([
+      const [caseResult, jenkinsResult, airflowResult, fileResult] = await Promise.all([
         api.cases(),
         api.plugin("mock_jenkins").catch(() => null),
+        api.plugin("airflow_input").catch(() => null),
+        api.plugin("file_input").catch(() => null),
       ]);
       setCases(caseResult.items);
-      setPlugin(pluginResult);
+      setPlugin(jenkinsResult);
+      setAirflow(airflowResult);
+      setFileSource(fileResult);
+      if (airflowResult?.enabled && airflowResult.health?.healthy) {
+        const dagResult = await api.airflowDags().catch(() => ({ items: [] }));
+        setDags(dagResult.items);
+      } else {
+        setDags([]);
+      }
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "加载数据源失败");
@@ -95,9 +112,166 @@ export function DataSourcesPage() {
     }
   };
 
+  const pollSource = async (pluginId: string) => {
+    setPolling(pluginId);
+    try {
+      const lookback = pluginId === "airflow_input" ? 10080 : 60;
+      const result = await api.pollSource(pluginId, 1, lookback);
+      const item = result.items[0];
+      if (item) {
+        showToast(`已触发:${item.case_id ?? item.source_id}`, "success");
+        navigate(`/traces/${item.trace_id}`);
+      } else {
+        showToast("没有发现新的失败事件", "info");
+      }
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : "检查失败", "error");
+    } finally {
+      setPolling(null);
+    }
+  };
+
+  const readFile = async (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > 2_000_000) {
+      showToast("文件不能超过 2MB", "error");
+      return;
+    }
+    setUploadName(file.name);
+    setUploadText(await file.text());
+  };
+
+  const uploadAndTrigger = async () => {
+    if (!uploadText.trim()) {
+      showToast("请先选择文件或粘贴日志内容", "error");
+      return;
+    }
+    setUploading(true);
+    try {
+      await api.uploadLog(uploadName, uploadText);
+      const result = await api.pollSource("file_input", 1, 60);
+      const item = result.items[0];
+      if (item) {
+        showToast("外部日志已触发流水线", "success");
+        navigate(`/traces/${item.trace_id}`);
+      } else {
+        showToast("文件已保存,但未产生新事件", "info");
+      }
+      setUploadText("");
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : "上传失败", "error");
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
     <div className="page-stack">
       {error ? <div className="alert alert-danger">{error}</div> : null}
+
+      <section className="source-grid">
+        <div className="source-card source-card-airflow">
+          <div className="source-card-head">
+            <div className="source-mark">
+              <Icon name="layers" size={22} />
+            </div>
+            <div className="source-copy">
+              <h2>Airflow 实时监控</h2>
+              <p>
+                轮询指定 DAG 的 failed Run;DAG 列表留空时监控全部。发现失败后自动创建
+                monitor_alert 并触发 Agent 流水线。
+              </p>
+            </div>
+            <Badge tone={airflow?.enabled && airflow.health?.healthy ? "success" : "neutral"}>
+              {airflow?.enabled ? (airflow.health?.healthy ? "已连接" : "不可用") : "已禁用"}
+            </Badge>
+          </div>
+          <div className="source-health">
+            {airflow?.health?.message ?? "尚未配置 Airflow"}
+            {dags.length ? <span> · 发现 {dags.length} 个 DAG</span> : null}
+          </div>
+          {dags.length ? (
+            <div className="dag-chips">
+              {dags.slice(0, 10).map((dag) => (
+                <span className="dag-chip" key={dag.dag_id}>
+                  {dag.dag_id}
+                  {dag.is_paused ? <em>已暂停</em> : null}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          <div className="source-actions">
+            <button
+              className="button button-primary button-small"
+              onClick={() => pollSource("airflow_input")}
+              disabled={polling !== null || !airflow?.enabled}
+            >
+              <Icon name="refresh" size={14} />
+              {polling === "airflow_input" ? "检查中…" : "立即检查(回看 7 天)"}
+            </button>
+            <button
+              className="button button-ghost button-small"
+              onClick={() => navigate("/plugins")}
+            >
+              配置 Airflow
+            </button>
+          </div>
+        </div>
+
+        <div className="source-card source-card-file">
+          <div className="source-card-head">
+            <div className="source-mark source-mark-file">
+              <Icon name="data" size={22} />
+            </div>
+            <div className="source-copy">
+              <h2>外部运行/错误日志</h2>
+              <p>
+                上传 .log/.txt/.json 文件,平台读取后生成事件;原始文件只保存在本机
+                data/input_files 目录。
+              </p>
+            </div>
+            <Badge tone={fileSource?.enabled ? "success" : "neutral"}>
+              {fileSource?.enabled ? "已启用" : "已禁用"}
+            </Badge>
+          </div>
+          <div className="file-upload-row">
+            <input
+              type="file"
+              accept=".log,.txt,.json,.md,.out"
+              onChange={(event) => readFile(event.target.files?.[0])}
+            />
+            <input
+              value={uploadName}
+              onChange={(event) => setUploadName(event.target.value)}
+              placeholder="文件名"
+            />
+          </div>
+          <textarea
+            className="log-textarea"
+            rows={4}
+            value={uploadText}
+            onChange={(event) => setUploadText(event.target.value)}
+            placeholder="也可以直接粘贴错误日志内容…"
+          />
+          <div className="source-actions">
+            <button
+              className="button button-primary button-small"
+              onClick={uploadAndTrigger}
+              disabled={uploading || !fileSource?.enabled}
+            >
+              <Icon name="check" size={14} />
+              {uploading ? "触发中…" : "上传并触发"}
+            </button>
+            <button
+              className="button button-ghost button-small"
+              onClick={() => pollSource("file_input")}
+              disabled={polling !== null || !fileSource?.enabled}
+            >
+              扫描目录
+            </button>
+          </div>
+        </div>
+      </section>
 
       <section className="source-banner">
         <div className="source-mark">

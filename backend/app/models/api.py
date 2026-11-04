@@ -28,6 +28,21 @@ class PipelineStage(BaseModel):
     system_prompt: str | None = Field(default=None, max_length=12000)
 
 
+class PipelineSource(BaseModel):
+    """流水线输入源节点(画布自定义扩展)。
+
+    文档 4.2 只在 Monitor 阶段声明 input_source;多输入源/画布新增属于
+    Demo 扩展,字段名在 docs/待确认问题清单.md 中登记【待确认 Q24】。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str = Field(min_length=1, max_length=100)
+    plugin_id: str = Field(min_length=1, max_length=100)
+    label: str | None = Field(default=None, max_length=100)
+    enabled: bool = True
+
+
 class PipelineDefinition(BaseModel):
     """文档 4.2 流水线组合结构。"""
 
@@ -36,6 +51,8 @@ class PipelineDefinition(BaseModel):
     pipeline_id: str = Field(min_length=1, max_length=100)
     orchestrator: str = Field(min_length=1)
     stages: list[PipelineStage] = Field(min_length=1)
+    # 输入源节点;为空时由服务端从 Monitor 阶段兼容推导。
+    sources: list[PipelineSource] = Field(default_factory=list)
 
 
 class PushEventRequest(BaseModel):
@@ -44,6 +61,24 @@ class PushEventRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     case_id: str | None = Field(default=None, min_length=1, max_length=100)
+
+
+class SourcePollRequest(BaseModel):
+    """手动触发输入源检查(画布/数据源页“立即检查”)。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int | None = Field(default=None, ge=1, le=20)
+    lookback_minutes: int | None = Field(default=None, ge=1, le=10080)
+
+
+class FileUploadRequest(BaseModel):
+    """外部日志文件上传;内容以文本方式提交,避免引入 multipart 依赖。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    filename: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=2_000_000)
 
 
 class ReviewRequest(BaseModel):
@@ -99,6 +134,7 @@ class PushEventOut(BaseModel):
     orchestrator_configured: str
     orchestrator_effective: str
     fallback_reason: str | None = None
+    input_source: str | None = None
     event: EventEnvelope
 
 

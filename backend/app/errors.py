@@ -52,3 +52,18 @@ class LLMUnavailableError(DomainError):
 class ToolExecutionError(DomainError):
     status_code = 502
     default_message = "工具执行失败"
+
+
+class NotificationError(DomainError):
+    status_code = 502
+    default_message = "通知发送失败"
+
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        retryable: bool = True,
+        details: Any = None,
+    ) -> None:
+        self.retryable = retryable
+        super().__init__(message, details=details)

@@ -45,10 +45,18 @@ export interface PipelineStage {
   system_prompt?: string | null;
 }
 
+export interface PipelineSource {
+  source_id: string;
+  plugin_id: string;
+  label?: string | null;
+  enabled?: boolean;
+}
+
 export interface PipelineDefinition {
   pipeline_id: string;
   orchestrator: string;
   stages: PipelineStage[];
+  sources: PipelineSource[];
 }
 
 export interface PipelineRecord {
@@ -116,6 +124,7 @@ export interface RunInfo {
   started_at: string;
   finished_at?: string | null;
   input_event: EventEnvelope;
+  input_source?: string | null;
 }
 
 export interface TraceStage {
@@ -125,6 +134,8 @@ export interface TraceStage {
   event_id?: string | null;
   confidence?: number | null;
   latency_ms?: number | null;
+  prompt?: string | null;
+  prompt_source?: string | null;
 }
 
 export interface Ticket {
@@ -196,6 +207,22 @@ export interface TraceSummary {
   error_reason?: string | null;
   started_at: string;
   finished_at?: string | null;
+  input_source?: string | null;
+}
+
+export interface AirflowDag {
+  dag_id: string;
+  is_paused?: boolean | null;
+  is_stale?: boolean | null;
+  timetable_summary?: string | null;
+}
+
+export interface SourcePollItem {
+  source_id: string;
+  trace_id: string;
+  run_id: string;
+  case_id?: string | null;
+  event_id?: string;
 }
 
 export interface DashboardData {

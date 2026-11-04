@@ -99,9 +99,18 @@ class BasePlugin:
 
 
 class InputSourcePlugin(BasePlugin):
-    """输入源插件。文档只定义职责,未定义方法【已确认 Q1/Q2】。"""
+    """输入源插件。文档只定义职责,未定义方法【已确认 Q1/Q2】。
+
+    【待确认 Q24】多输入源/轮询为画布扩展:支持实时监控的插件实现
+    collect_alerts();不支持轮询的插件返回空列表,由外部 webhook 推送。
+    """
 
     plugin_type = "input_source"
+
+    async def collect_alerts(
+        self, limit: int | None = None, lookback_minutes: int | None = None
+    ) -> list[dict[str, Any]]:
+        return []
 
 
 class AgentPlugin(BasePlugin):

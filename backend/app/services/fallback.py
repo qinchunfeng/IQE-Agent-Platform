@@ -59,11 +59,6 @@ async def resolve_orchestrator(
         return memory, f"编排器不存在: {preferred},降级到内置编排器"
     if not registry.is_enabled(preferred):
         return memory, f"编排器已禁用: {preferred},降级到内置编排器"
-    if preferred == "airflow_orchestrator":
-        # 【已确认 Q8】未显式开启执行委托时,不触发 DAG,避免无回调导致 Run 挂起。
-        config = registry.get_config(preferred)
-        if not bool(config.get("delegate_execution", False)):
-            return memory, "Airflow 插件未启用执行委托,使用内置编排器"
 
     health = await registry.health(preferred)
     if not health["healthy"]:

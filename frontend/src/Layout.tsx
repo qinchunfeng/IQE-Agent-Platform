@@ -85,7 +85,7 @@ export function Layout() {
             <div className="sidebar-note-title">万物插件</div>
             <p>平台内核只做编排,Airflow / Qoder CN 均为可选插件。</p>
           </div>
-          <div className="sidebar-version">v0.1.0-demo · 文档 v2.3</div>
+          <div className="sidebar-version">v0.1.0-demo · 文档 v2.4</div>
         </div>
       </aside>
 

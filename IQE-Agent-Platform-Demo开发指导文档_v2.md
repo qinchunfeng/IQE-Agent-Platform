@@ -1,9 +1,9 @@
-# AI Agent 插件化编排平台 Demo 开发指导文档 v2.3
+# AI Agent 插件化编排平台 Demo 开发指导文档 v2.5
 
 > **文档定位**:面向管理层/决策者的 1-2 周快速 Demo,展示业务价值 + 技术可行性
 > **核心原则**:万物插件(所有能力都是插件,平台内核只做编排)
-> **集成策略**:真实集成 Airflow + Qoder CN,保留 mock 降级方案
-> **版本**:v2.3 | 2026-11-02
+> **集成策略**:真实集成 Airflow(输入源) + Qoder CN(LLM),保留 mock 降级方案
+> **版本**:v2.5 | 2026-11-03
 
 ---
 
@@ -11,9 +11,9 @@
 
 **IQE-Agent Platform 是一个独立的 AI Agent 编排平台**,不依赖任何特定的 CI/CD 或调度系统。
 
-- **Airflow、Jenkins、GitLab CI 等都是可选的集成插件**,不是平台的前提条件
+- **Airflow、Jenkins、GitLab CI 等都是可选的输入源插件**,不是平台的前提条件
 - **平台自带编排引擎**,可以独立运行流水线
-- **如果客户已有 Airflow**,可以启用 Airflow 插件,将 Agent 任务委托给 Airflow 调度
+- **如果客户已有 Airflow**,可将其配置为输入源插件,实时监控全部或指定 DAG 的失败运行并自动触发 Agent 流水线
 - **如果客户没有 Airflow**,平台可以直接运行,无需额外基础设施
 
 **核心价值**: 一个平台,任意集成,不被技术栈锁定。
@@ -57,17 +57,18 @@
 
 | 传统架构 | 万物插件架构 |
 |---|---|
-| 硬编码 Airflow 集成 | Airflow 是编排插件之一,可换成 Temporal/自研 |
+| 硬编码 Airflow 集成 | Airflow 是输入源插件之一,可换成 Jenkins/GitLab/文件 |
 | 硬编码 OpenAI API | Qoder CN 是 LLM 插件之一,可换成 GPT/本地模型 |
 | 换技术栈 = 重写 | 换技术栈 = 换插件 |
 | 单点故障风险 | 插件级降级(mock  fallback) |
 | 技术锁定 | 技术栈无关 |
 
 ### 1.3 Demo 中的具体体现
-- **Airflow** 不是"必需的基础设施",而是"编排引擎插件"的一个可选实现
+- **Airflow** 不是"编排引擎",而是"输入源插件"的一个可选实现:轮询失败 DAG Run 并生成 `monitor_alert`
 - **Qoder CN** 不是"外部 API",而是"LLM 提供商插件"的一个实现
 - **Jenkins** 不是"唯一的输入源",而是"输入源插件"的一个实现
-- 演示时现场切换插件(如 Airflow → 内存编排器),展示平台独立性
+- **编排引擎固定为内置编排器**(v2.4 起不再把 Airflow 作为编排器插件),演示时通过插件开关展示外部依赖可插拔
+- 演示时现场切换输入源与 LLM 插件,展示平台独立性
 
 ---
 
@@ -77,14 +78,16 @@
 
 | 插件类型 | 职责 | Demo 示例 | 生产示例 |
 |---|---|---|---|
-| **输入源插件** | 接收外部事件 | Mock Jenkins | 真实 Jenkins Webhook |
+| **输入源插件** | 接收/拉取外部事件 | Mock Jenkins、**Airflow(真实轮询)**、外部日志文件 | 真实 Jenkins Webhook、GitLab CI |
 | **Agent 插件** | 执行业务逻辑 | 6 个 IQE Agent | 自定义 Agent |
 | **知识库插件** | 存储/检索知识 | 内存向量库 | Milvus/PGVector |
 | **工具插件** | 提供原子能力 | Mock Jira | 真实 Jira API |
-| **编排引擎插件** | 调度 Agent 执行 | 内存编排器 | **Airflow**(真实集成) |
+| **编排引擎插件** | 调度 Agent 执行 | 内置内存编排器 | Temporal/自研调度 |
 | **LLM 提供商插件** | 提供推理能力 | Mock LLM | **Qoder CN**(真实集成) |
 | **事件总线插件** | 事件投递/订阅 | 内存队列 | Kafka/RabbitMQ |
 | **存储插件** | 持久化数据 | SQLite | PostgreSQL + S3 |
+
+> **v2.4 变更**:Airflow 从「编排引擎插件」调整为「输入源插件」,平台只负责实时监控其全部/指定 DAG,出现失败时自动触发 Agent 流水线;编排器固定为内置 `memory_orchestrator`。详见 3.6。
 
 ### 2.1 插件依赖声明
 每个插件声明依赖的其他插件类型(示例):
@@ -126,23 +129,25 @@
 }
 ```
 
-### 3.2 编排引擎插件接口(以 Airflow 为例)
+### 3.2 编排引擎插件接口
+
+> v2.4 起 Demo 仅保留内置 `memory_orchestrator`;Airflow 不再实现该接口,而是按 3.6 作为输入源插件。接口保留以便后续接入 Temporal 等调度器。
 
 ```python
 class OrchestratorPlugin:
     plugin_id: str
-    display_name: str  # "Airflow Orchestrator"
-    config_schema: dict  # Airflow URL、DAG 前缀、认证信息
+    display_name: str  # "Memory Orchestrator"
+    config_schema: dict  # 并发上限等
 
     def __init__(self, config: dict):
         ...
 
     async def start_pipeline(self, pipeline_def: dict) -> str:
-        # 触发 DAG 运行,返回 run_id
+        # 启动流水线运行,返回 run_id
         ...
 
     async def get_pipeline_status(self, run_id: str) -> dict:
-        # 查询 DAG 运行状态
+        # 查询运行状态
         ...
 
     async def stop_pipeline(self, run_id: str):
@@ -196,6 +201,7 @@ class LLMProviderPlugin:
    - `prompt_version`:Prompt 模板版本;
    - `prompt_source`:`default` / `plugin` / `stage`;
    - `prompt_hash`:最终 Prompt 的 SHA-256 前 12 位;
+   - `prompt_text`:本次运行实际发送给模型的 system prompt 快照(v2.4 增强),用于历史 Run 的精确回看;
 5. 上述字段只扩展 `payload`,**不改变文档 3.1 的事件信封字段**。
 
 **约束**:
@@ -225,8 +231,8 @@ class LLMProviderPlugin:
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
 │  │ 编排引擎 │ │  LLM     │ │ 事件总线 │ │ 存储     │       │
 │  │ 插件     │ │  提供商  │ │ 插件     │ │ 插件     │       │
-│  │ (可选     │ │          │ │          │ │          │       │
-│  │  Airflow) │ │          │ │          │ │          │       │
+│  │ (内置     │ │          │ │          │ │          │       │
+│  │  Memory)  │ │          │ │          │ │          │       │
 │  └──────────┘ └──────────┘ └──────────┘ └──────────┘       │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -236,31 +242,36 @@ class LLMProviderPlugin:
          │                    │                    │
     ┌────┴────┐         ┌────┴────┐         ┌────┴────┐
     │ Airflow │         │ Qoder CN│         │ Jenkins │
-    │ (可选)  │         │ (可选)  │         │ (可选)  │
+    │(输入源) │         │ (LLM)   │         │(输入源) │
     └─────────┘         └─────────┘         └─────────┘
          │                    │                    │
     ┌────┴────┐         ┌────┴────┐         ┌────┴────┐
     │  Mock   │         │  Mock   │         │  Mock   │
-    │ 降级    │         │ 降级    │         │ 降级    │
+    │ 降级/Mock│         │ 降级    │         │ 降级    │
     └─────────┘         └─────────┘         └─────────┘
 ```
 
 **关键设计**:
-- 平台**自带编排引擎**,可以独立运行(默认)
-- Airflow 是**可选插件**,启用后可以将任务委托给 Airflow 调度
-- 所有外部系统(Airflow/Qoder CN/Jenkins)都有 Mock 降级方案
-- 演示时可以先用内置引擎 + Mock 插件跑通,再切换真实插件
+- 平台**自带编排引擎**,可以独立运行(默认且唯一)
+- Airflow 是**输入源插件**,轮询其失败 Run 并触发 Agent 流水线,不承担编排职责
+- Jenkins / 外部日志文件同样是输入源插件,统一转换为文档 3.1 标准信封
+- 所有外部系统(Airflow/Jenkins/Qoder CN)都有 Mock 降级方案
+- 演示时可以先用内置引擎 + Mock 插件跑通,再切换真实输入源/LLM 插件
 
 ### 4.2 插件组合示例(IQE 流水线)
 
 ```json
 {
   "pipeline_id": "iqe_validation_v1",
-  "orchestrator": "airflow_orchestrator",
+  "orchestrator": "memory_orchestrator",
+  "sources": [
+    {"source_id": "mock_jenkins", "plugin_id": "mock_jenkins", "label": "Jenkins / Mock Jenkins", "enabled": true},
+    {"source_id": "airflow_prod", "plugin_id": "airflow_input", "label": "Airflow 生产", "enabled": true}
+  ],
   "stages": [
     {
       "agent": "monitor_agent",
-      "input_source": "jenkins_webhook",
+      "input_source": "mock_jenkins",
       "llm_provider": "qoder_cn",
       "knowledge_base": null
     },
@@ -312,6 +323,82 @@ class LLMProviderPlugin:
 2. **流水线画布 → 选中阶段 → System Prompt**:只覆盖当前流水线阶段;
 3. 画布保存后,阶段级 Prompt 写入 `pipelines.definition_json`,下一次 Run 生效。
 
+### 3.6 输入源插件与 Airflow 实时监控(v2.4 新增)
+
+输入源插件在统一基类上增加可选轮询能力:
+
+```python
+class InputSourcePlugin(PluginBase):
+    async def collect_alerts(self, limit: int, lookback_minutes: int) -> list[dict]:
+        # 返回标准事件信封列表;默认空(仅推送型输入源不实现)
+        ...
+```
+
+**Airflow 输入源插件(`airflow_input`)**
+
+| 配置项 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `api_url` | string | — | Airflow 根地址,如 `http://airflow.example.com:8080` |
+| `username` / `password` | string / secret | — | 登录凭据;响应与日志中密码脱敏为 `***` |
+| `dag_ids` | multiline | 空 | **留空 = 监控全部 DAG;非空 = 仅监控列出的 DAG**(逗号/换行分隔) |
+| `api_version` | enum | `auto` | `auto` 优先探测 REST v2,失败回退 v1 |
+| `poll_interval_seconds` | integer | 60 | 后台轮询间隔,最小 5 秒 |
+| `lookback_minutes` | integer | 60 | 首次/手动检查的回看窗口 |
+| `max_events_per_poll` | integer | 3 | 单轮最多生成的告警数 |
+| `max_tasks_per_run` | integer | 3 | 单个失败 Run 最多采集的失败任务数 |
+| `timeout_seconds` | integer | 15 | 单次 HTTP 超时 |
+
+**采集流程**:
+1. 鉴权:Airflow 3 先 `POST /auth/token` 换取 JWT,后续请求携带 Bearer;Airflow 2 使用 Basic Auth。
+2. 查询:按 `dag_ids` 查询 `failed` 的 DAG Run(`order_by=-logical_date`),再枚举失败 TaskInstance 并读取日志。
+3. 幂等:以 `dag_id:dag_run_id` 为 `event_key` 写入 SQLite `source_events`;已处理的事件不再重复触发。
+4. 生成:每个失败 Run 构造一条 `monitor_alert` 标准信封,`payload` 包含 `case_id/title/job_name/build_number/log_excerpt/artifact_url` 及 `airflow_*` 扩展字段。
+5. 触发:通过 `PipelineService.submit_external_event()` 选择启用了该输入源的流水线,创建 Run 并启动内置编排器。
+
+**安全与边界**:
+- 日志按 ANSI 控制符清洗,并对 `password/token/api_key/Bearer` 等模式脱敏后再进入事件与 Trace;
+- 单个日志最大 6000 字符,避免超长上下文;
+- 外部平台凭据只写入本机 SQLite(已 gitignore),不进入代码仓库、不写入日志;
+- Airflow 不可用时仅影响该输入源轮询,流水线可在 Mock 输入源下继续演示(文档 7.4)。
+
+**失败 Run 的处理语义**:Reproduction Agent 可能判定为环境问题并拒绝建单,这是文档 4.2 的正常分支,不代表监控失败;Trace 会记录 `rejected` 及原因。
+
+### 3.7 流水线画布自定义(v2.4 新增)
+
+画布支持在不改代码的前提下调整流水线拓扑:
+
+- **输入源节点**:从已注册输入源插件中添加,可启停;支持同一插件多个实例(以 `source_id` 区分);
+- **Agent 节点**:从 Agent 插件中添加,允许重复添加同一 Agent;每个节点可配置阶段序号(决定执行顺序)、LLM、知识库、工具、人工卡点、System Prompt;
+- **删除/排序**:删除节点后自动重排;阶段序号重复时按画布顺序稳定执行;
+- **保存**:写入 `pipelines.definition_json`,下一次 Run 生效;不影响正在运行的 Run;
+- **执行映射**:Trace 通过 `source_agent` 顺序游标映射阶段,支持重复 Agent 而不串行错位。
+
+流水线定义新增 `sources` 数组(兼容旧定义):
+
+```json
+{
+  "pipeline_id": "iqe_validation_v1",
+  "orchestrator": "memory_orchestrator",
+  "sources": [
+    {"source_id": "mock_jenkins", "plugin_id": "mock_jenkins", "label": "Jenkins / Mock Jenkins", "enabled": true},
+    {"source_id": "airflow_prod", "plugin_id": "airflow_input", "label": "Airflow 生产", "enabled": true}
+  ],
+  "stages": [...]
+}
+```
+
+旧定义迁移规则:若 `sources` 缺失,由首个阶段的 `input_source` 派生;历史 `airflow_orchestrator` 自动归一为 `memory_orchestrator`,历史 `jenkins_webhook` 归一为 `mock_jenkins`。
+
+### 3.8 LLM 提供商真实接入(v2.4 新增)
+
+- 插件 `qoder_cn` 通过 OpenAI 兼容接口访问代理(默认 `http://127.0.0.1:3000/v1`),配置 `api_url/api_key/model/timeout_seconds`;
+- 健康检查:`GET {api_url}/models` + Bearer,返回 `Qoder CN 可访问(HTTP 200)`;
+- 响应解析:兼容纯 JSON、` ```json ` 代码围栏、以及前后带说明文字的 JSON;均失败时抛出 Schema 校验错误;
+- 失败降级:LLM 不可用或返回不符合 Schema 时,按文档 7.4 降级到 Mock LLM,并在 Trace 标注降级原因;
+- 真实调用证据:`model_info.model_loc=cloud_qoder_cn`、`model_name=DeepSeek-Flash`,可在 Trace 事件链查看。
+
+> **凭据说明**:Qoder CN 代理的客户端 Key 是代理自身的 `PROXY_API_KEY`;用户提供的 `pt-...` 为上游个人访问令牌,不能直接作为代理客户端 Key。Demo 运行时不修改代理配置,直接复用代理已配置的客户端 Key。
+
 ---
 
 ## 5. Demo 实现计划(1-2 周)
@@ -321,7 +408,7 @@ class LLMProviderPlugin:
 | 阶段 | 时间 | 交付物 | 验收标准 |
 |---|---|---|---|
 | **Phase 1: 核心骨架** | Day 1-3 | 插件基类、注册中心、事件信封、内存编排器、SQLite 存储 | 能加载插件、能跑通空流水线 |
-| **Phase 2: 真实集成** | Day 4-7 | Airflow 编排插件、Qoder CN LLM 插件、6 个 IQE Agent | 能触发真实 DAG、能调用真实 LLM |
+| **Phase 2: 真实集成** | Day 4-7 | Airflow 输入源插件、Qoder CN LLM 插件、6 个 IQE Agent | 能实时监控真实 DAG 失败、能调用真实 LLM |
 | **Phase 3: 演示打磨** | Day 8-10 | 前端画布、Trace 页面、实验面板、演示脚本 | 能完整演示 5 个核心场景 |
 | **缓冲** | Day 11-14 | 修复问题、文档、预演 | 演示稳定、无阻塞 bug |
 
@@ -344,7 +431,9 @@ class LLMProviderPlugin:
 
 | 任务 | 负责人 | 产出 |
 |---|---|---|
-| Airflow 编排插件(真实 API 集成) | 后端 | `airflow_orchestrator.py` |
+| Airflow 输入源插件(真实 API 集成) | 后端 | `airflow_input.py` |
+| 外部日志文件输入源插件 | 后端 | `file_input.py` |
+| 输入源后台轮询与自动触发 | 后端 | `source_monitor.py` |
 | Qoder CN LLM 插件(真实 API 集成) | 后端 | `qoder_cn_llm.py` |
 | Mock 降级逻辑(Airflow/Qoder CN 不可用时自动降级) | 后端 | `fallback_logic.py` |
 | 6 个 IQE Agent 完整实现(调用 Qoder CN) | 后端 | Agent 完整逻辑 |
@@ -406,11 +495,11 @@ class LLMProviderPlugin:
 ### 场景 4: 平台独立性(展示不依赖外部系统)
 **目标**:展示平台可以独立运行,不依赖 Airflow/Jenkins 等外部系统
 **操作**:
-1. 打开插件管理页面,显示当前编排引擎是"内置编排引擎"(默认)
-2. 展示流水线正常运行,无需任何外部系统
-3. 点击"启用 Airflow 插件",填写 Airflow URL 和凭证
-4. 切换到 Airflow 编排器,展示流水线重新运行,功能完全一致
-5. 关闭 Airflow 插件,自动降级回内置编排器,流水线继续运行
+1. 打开插件管理页面,显示当前编排引擎是"内置编排引擎"(默认且唯一)
+2. 展示流水线正常运行,无需任何外部系统(数据源页 Mock Jenkins 推送)
+3. 在插件管理中启用 Airflow 输入源,填写 Airflow URL、凭据与 DAG 列表(DAG 留空 = 全部监控)
+4. 在数据源页点击"立即检查",展示真实 Airflow 失败 Run 被转换为 `monitor_alert` 并自动创建 Trace
+5. 禁用 Airflow 输入源,流水线仍可由 Mock Jenkins/外部日志文件触发,不影响演示
 6. 同样演示 LLM 插件切换(Qoder CN → Mock LLM)
 
 **关键信息**:平台自带核心能力,外部系统是可选增强,不是前提条件
@@ -452,8 +541,9 @@ class LLMProviderPlugin:
 ### 7.4 Mock 降级策略
 | 真实服务 | 降级方案 | 触发条件 |
 |---|---|---|
-| Airflow | 内存编排器 | Airflow API 不可用或超时 |
-| Qoder CN | Mock LLM | Qoder CN API 不可用或超时 |
+| Airflow(输入源) | 跳过本轮轮询 / 使用 Mock Jenkins 或文件输入源 | Airflow API 不可用、鉴权失败或超时 |
+| 编排引擎 | 内置 `memory_orchestrator` | 插件缺失或禁用(v2.4 起为唯一编排器) |
+| Qoder CN | Mock LLM | Qoder CN API 不可用、超时或返回不符合 Schema |
 | 真实 Jenkins | Mock Jenkins | 无真实 Jenkins 环境 |
 | 真实 Jira | Mock Jira | 无真实 Jira 环境 |
 | Milvus | 内存向量库 | 无真实 Milvus 环境 |
@@ -464,8 +554,13 @@ class LLMProviderPlugin:
 
 ### 8.1 功能验收
 - [ ] 能加载 8 类插件,插件列表页面正常显示
-- [ ] 能创建 IQE 流水线(6 个 Agent + Airflow 编排 + Qoder CN LLM)
+- [ ] 能创建 IQE 流水线(6 个 Agent + 内置编排 + Qoder CN LLM)
 - [ ] 能推送模拟 CI 事件,流水线自动流转
+- [ ] Airflow 作为输入源插件,可配置平台地址/凭据/DAG 列表(DAG 留空 = 全部监控)
+- [ ] 能实时检查真实 Airflow 失败 Run,生成 `monitor_alert` 并自动触发流水线
+- [ ] 相同 `dag_id:dag_run_id` 不会重复触发(幂等)
+- [ ] 画布可新增/删除输入源,可新增/删除/排序 Agent,允许重复 Agent
+- [ ] 支持上传外部运行/错误日志文件并触发流水线
 - [ ] Trace 页面能查看完整链路(输入、输出、耗时、置信度)
 - [ ] 低置信度事件自动流转人工节点
 - [ ] Reviewer 能驳回/批准工单
@@ -474,6 +569,24 @@ class LLMProviderPlugin:
 - [ ] Agent 插件配置页可修改 `system_prompt` 并持久化
 - [ ] 流水线画布可修改阶段级 `system_prompt`,保存后下一次 Run 生效
 - [ ] Trace 事件 payload 可查看 `prompt_version / prompt_source / prompt_hash`
+- [ ] 仪表盘 Agent 抽屉展示本次运行实际使用的 System Prompt 快照及来源
+- [ ] Run 完成/驳回/失败后可向飞书群或个人发送汇总卡片,同一状态只发送一次
+- [ ] 飞书通知未配置/发送失败时不影响流水线终态,投递状态可查询
+- [ ] 飞书 Webhook URL 与应用密钥在响应/日志中脱敏
+
+### 8.4 真实集成验收证据(v2.4,2026-11-03)
+
+| 项目 | 环境 | 结果 |
+|---|---|---|
+| Airflow 健康检查 | Airflow 3.3.1 测试环境 | `Airflow 3.3.1 可访问,发现 19 个 DAG` |
+| 指定 DAG 监控 | `test_flash_attention_flow` | 失败 Run 被识别,生成 `monitor_alert`,自动创建 Trace |
+| Airflow 鉴权 | Airflow 3 REST v2 + JWT | `POST /auth/token` 成功,401 自动刷新 |
+| 真实 LLM 健康检查 | `http://127.0.0.1:3000/v1` | `Qoder CN 可访问(HTTP 200)` |
+| 真实 LLM 端到端 | `DeepSeek-Flash` | 6 个 Agent 均记录 `cloud_qoder_cn`,工单成功创建 |
+| LLM 降级 | 关闭/不可用 | Trace 标注 `fallback_reason`,自动使用 Mock LLM |
+| 自动化测试 | 后端 + 前端 | pytest **57 passed**;`tsc -b && vite build` 成功 |
+
+> Airflow 环境失败类 Run 可能在 Reproduction 阶段被判定为环境问题并拒绝建单,这是文档 4.2 的业务分支;改用 Mock 案例 `IQE-CASE-001` 可完整验证 6 Agent 全链路。
 
 ### 8.2 演示验收
 - [ ] 5 个核心场景都能完整演示(每个 3-5 分钟)
@@ -494,7 +607,9 @@ class LLMProviderPlugin:
 
 | 风险 | 影响 | 缓解措施 |
 |---|---|---|
-| Airflow API 集成复杂 | 延期 | Day 4 先做 mock,Day 6 再集成真实 API |
+| Airflow API 集成复杂 | 延期 | 先做 Mock 输入源,再按 Airflow 3 REST v2/JWT 集成真实轮询 |
+| Airflow 失败日志格式差异 | 解析失败 | 按事件列表/纯文本两种格式兼容,并限制长度与脱敏 |
+| 输入源重复触发 | 重复工单 | `source_events` 以 `dag_id:dag_run_id` 幂等去重 |
 | Qoder CN API 文档不全 | 延期 | 提前联系 Qoder CN 团队获取 API 文档 |
 | 演示时真实服务不可用 | 演示失败 | Mock 降级方案必须就绪 |
 | 前端画布开发耗时 | 延期 | 用 React Flow 现成组件,不自己写拖拽 |
@@ -591,3 +706,5 @@ class MyCustomAgent(AgentPlugin):
 - v2.1 (2026-11-02): 强调产品独立性,平台自带编排引擎,Airflow/Jenkins 为可选插件
 - v2.2 (2026-11-02): 按本机端口占用情况调整——前端端口 3000 → 3200,新增端口约定(后端 8000、Airflow 18080)
 - v2.3 (2026-11-02): 新增 Agent System Prompt 配置与两级覆盖(插件级 / 阶段级)、默认模板、Prompt 版本与哈希审计;补充画布与插件配置入口、验收项与风险
+- v2.4 (2026-11-03): Airflow 从编排引擎插件改为输入源插件(支持全部/指定 DAG、Airflow 3 REST v2 + JWT、失败 Run 自动触发与幂等去重);新增外部日志文件输入源;流水线画布支持新增输入源与 Agent(含重复 Agent);补充 Qoder CN 真实接入(DeepSeek-Flash、JSON 围栏解析、Schema 失败降级);新增真实集成验收证据,测试增至 47 项
+- v2.5 (2026-11-03): 新增 `feishu_notifier` 工具插件(Webhook / 自建应用双模式)、`NotificationService` 终态异步通知、`run_notifications` 按状态幂等与失败隔离;Webhook URL/应用密钥脱敏;测试增至 57 项

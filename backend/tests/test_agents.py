@@ -203,6 +203,7 @@ async def test_monitor_uses_plugin_prompt_and_records_prompt_meta():
         assert result.payload["prompt_source"] == "plugin"
         assert result.payload["prompt_version"]
         assert len(result.payload["prompt_hash"]) == 12
+        assert result.payload["prompt_text"] == "CUSTOM MONITOR PROMPT"
     finally:
         agent.unload()
 
@@ -224,6 +225,7 @@ async def test_stage_prompt_source_is_recorded():
         result = await agent.run(event)
         assert recorder.messages[0]["content"] == "STAGE MONITOR PROMPT"
         assert result.payload["prompt_source"] == "stage"
+        assert result.payload["prompt_text"] == "STAGE MONITOR PROMPT"
     finally:
         agent.unload()
 

@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS runs (
     error_reason TEXT,
     started_at TEXT NOT NULL,
     finished_at TEXT,
-    input_event_json TEXT NOT NULL
+    input_event_json TEXT NOT NULL,
+    input_source TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_runs_started_at ON runs(started_at);
@@ -100,6 +101,25 @@ CREATE TABLE IF NOT EXISTS dead_letters (
     reason TEXT NOT NULL,
     event_json TEXT,
     created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS source_events (
+    source_id TEXT NOT NULL,
+    event_key TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (source_id, event_key)
+);
+
+CREATE TABLE IF NOT EXISTS run_notifications (
+    run_id TEXT NOT NULL,
+    plugin_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    state TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, plugin_id, status)
 );
 """
 
@@ -178,11 +198,23 @@ def _migrate_knowledge_columns(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE knowledge_entries ADD COLUMN root_cause TEXT")
 
 
+def _migrate_run_columns(connection: sqlite3.Connection) -> None:
+    """为既有 Demo 数据库补充输入源列(输入源插件化扩展)。"""
+
+    columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(runs)").fetchall()
+    }
+    if "input_source" not in columns:
+        connection.execute("ALTER TABLE runs ADD COLUMN input_source TEXT")
+
+
 def init_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with _writer() as connection:
         connection.executescript(_SCHEMA)
         _migrate_knowledge_columns(connection)
+        _migrate_run_columns(connection)
 
 
 def reset_db_for_tests(path: Path) -> None:
@@ -312,6 +344,7 @@ def _run_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "started_at": row["started_at"],
         "finished_at": row["finished_at"],
         "input_event": _loads(row["input_event_json"], {}),
+        "input_source": row["input_source"],
     }
 
 
@@ -322,8 +355,9 @@ def create_run(run: dict[str, Any]) -> None:
             INSERT INTO runs(
                 run_id, pipeline_id, trace_id, status, orchestrator_configured,
                 orchestrator_used, orchestrator_run_id, fallback_reason, current_stage,
-                human_reason, error_reason, started_at, finished_at, input_event_json
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                human_reason, error_reason, started_at, finished_at, input_event_json,
+                input_source
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run["run_id"],
@@ -340,6 +374,7 @@ def create_run(run: dict[str, Any]) -> None:
                 run["started_at"],
                 run.get("finished_at"),
                 _dumps(run["input_event"]),
+                run.get("input_source"),
             ),
         )
 
@@ -573,3 +608,69 @@ def list_dead_letters(trace_id: str) -> list[dict[str, Any]]:
         }
         for row in rows
     ]
+
+
+# -------------------------------------------------------------- source events
+
+
+def mark_source_event_seen(source_id: str, event_key: str) -> bool:
+    """输入源事件去重。返回 True 表示首次出现,False 表示已处理过。"""
+
+    with _writer() as connection:
+        cursor = connection.execute(
+            "INSERT OR IGNORE INTO source_events(source_id, event_key, created_at) VALUES(?, ?, ?)",
+            (source_id, event_key, utc_now_iso()),
+        )
+        return cursor.rowcount == 1
+
+
+def reset_source_events(source_id: str) -> None:
+    """仅用于测试/演示重放:清空指定输入源的已处理游标。"""
+
+    with _writer() as connection:
+        connection.execute("DELETE FROM source_events WHERE source_id = ?", (source_id,))
+
+
+# ---------------------------------------------------------------- notifications
+
+
+def claim_run_notification(run_id: str, plugin_id: str, status: str) -> bool:
+    """按 Run + 插件 + 状态幂等认领一次通知。返回 True 表示由本次调用发送。"""
+
+    now = utc_now_iso()
+    with _writer() as connection:
+        cursor = connection.execute(
+            """
+            INSERT OR IGNORE INTO run_notifications(
+                run_id, plugin_id, status, state, attempts, error, created_at, updated_at
+            ) VALUES(?, ?, ?, 'pending', 0, NULL, ?, ?)
+            """,
+            (run_id, plugin_id, status, now, now),
+        )
+        return cursor.rowcount == 1
+
+
+def update_run_notification(
+    run_id: str, plugin_id: str, status: str, *, state: str, attempts: int, error: str | None
+) -> None:
+    with _writer() as connection:
+        connection.execute(
+            """
+            UPDATE run_notifications
+            SET state = ?, attempts = ?, error = ?, updated_at = ?
+            WHERE run_id = ? AND plugin_id = ? AND status = ?
+            """,
+            (state, attempts, error, utc_now_iso(), run_id, plugin_id, status),
+        )
+
+
+def list_run_notifications(run_id: str) -> list[dict[str, Any]]:
+    with _reader() as connection:
+        rows = connection.execute(
+            """
+            SELECT run_id, plugin_id, status, state, attempts, error, created_at, updated_at
+            FROM run_notifications WHERE run_id = ? ORDER BY created_at ASC
+            """,
+            (run_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]

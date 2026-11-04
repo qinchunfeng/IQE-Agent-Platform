@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -37,6 +38,7 @@ from ..models.api import PipelineDefinition
 from ..models.event import EventEnvelope, EventStatus, EventType, validate_event
 from ..plugins.registry import PluginRegistry
 from .fallback import resolve_llm, resolve_optional_plugin, resolve_orchestrator
+from .notification_service import NotificationService
 
 logger = get_logger("iqe.pipeline")
 
@@ -48,15 +50,87 @@ def _parse_iso(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+LEGACY_JENKINS_SOURCE = "jenkins_webhook"
+DEFAULT_INPUT_SOURCE = "mock_jenkins"
+SOURCE_LABELS = {
+    "mock_jenkins": "Jenkins / Mock Jenkins",
+    "airflow_input": "Airflow 输入源",
+    "file_input": "外部日志文件",
+}
+
+
+def normalize_definition(definition: dict[str, Any]) -> dict[str, Any]:
+    """兼容旧流水线并补齐画布输入源节点。
+
+    【待确认 Q24】文档 4.2 只在 Monitor 阶段声明 input_source;多输入源是
+    Demo 扩展。旧定义没有 sources 时,从 Monitor 的 input_source 推导一个节点。
+    """
+
+    data = copy.deepcopy(definition)
+    if data.get("orchestrator") in (None, "airflow_orchestrator"):
+        # Airflow 已改为输入源插件,不再作为编排器。
+        data["orchestrator"] = "memory_orchestrator"
+
+    stages = data.get("stages") or []
+    for stage in stages:
+        if stage.get("input_source") == LEGACY_JENKINS_SOURCE:
+            stage["input_source"] = DEFAULT_INPUT_SOURCE
+
+    sources = data.get("sources")
+    if not sources:
+        stage_source = next(
+            (stage.get("input_source") for stage in stages if stage.get("input_source")),
+            DEFAULT_INPUT_SOURCE,
+        )
+        plugin_id = (
+            DEFAULT_INPUT_SOURCE
+            if stage_source == LEGACY_JENKINS_SOURCE
+            else str(stage_source or DEFAULT_INPUT_SOURCE)
+        )
+        sources = [
+            {
+                "source_id": plugin_id,
+                "plugin_id": plugin_id,
+                "label": SOURCE_LABELS.get(plugin_id, plugin_id),
+                "enabled": True,
+            }
+        ]
+    normalized_sources: list[dict[str, Any]] = []
+    for index, source in enumerate(sources):
+        item = dict(source)
+        plugin_id = str(item.get("plugin_id") or item.get("source_id") or "").strip()
+        if not plugin_id:
+            continue
+        item["plugin_id"] = plugin_id
+        item["source_id"] = str(item.get("source_id") or plugin_id).strip()
+        item["label"] = str(item.get("label") or SOURCE_LABELS.get(plugin_id, plugin_id))
+        item["enabled"] = bool(item.get("enabled", True))
+        normalized_sources.append(item)
+    if not normalized_sources:
+        normalized_sources = [
+            {
+                "source_id": DEFAULT_INPUT_SOURCE,
+                "plugin_id": DEFAULT_INPUT_SOURCE,
+                "label": SOURCE_LABELS[DEFAULT_INPUT_SOURCE],
+                "enabled": True,
+            }
+        ]
+    data["sources"] = normalized_sources
+    return data
+
+
 class PipelineService:
     def __init__(self, registry: PluginRegistry) -> None:
         self.registry = registry
+        self.notifications = NotificationService(registry)
 
     # --------------------------------------------------------------- pipeline
 
     def create_pipeline(self, definition: PipelineDefinition) -> dict[str, Any]:
-        data = definition.model_dump()
-        if not self.registry.has(data["orchestrator"]):
+        data = normalize_definition(definition.model_dump())
+        if not self.registry.has(data["orchestrator"]) or not self.registry.is_type(
+            data["orchestrator"], "orchestrator"
+        ):
             raise ConfigurationError(f"编排器不存在: {data['orchestrator']}")
         for index, stage in enumerate(data["stages"]):
             agent_id = stage["agent"]
@@ -69,8 +143,18 @@ class PipelineService:
                         f"阶段 {index + 1} 的 {field} 插件不存在: {plugin_id}"
                     )
             input_source = stage.get("input_source")
-            if input_source and input_source != "jenkins_webhook" and not self.registry.has(input_source):
+            if input_source and not self.registry.has(input_source):
                 raise ConfigurationError(f"输入源插件不存在: {input_source}")
+        seen_sources: set[str] = set()
+        for source in data["sources"]:
+            plugin_id = source["plugin_id"]
+            if not self.registry.has(plugin_id) or not self.registry.is_type(
+                plugin_id, "input_source"
+            ):
+                raise ConfigurationError(f"输入源插件不存在: {plugin_id}")
+            if source["source_id"] in seen_sources:
+                raise ConfigurationError(f"输入源节点重复: {source['source_id']}")
+            seen_sources.add(source["source_id"])
         db.save_pipeline(data)
         return self.get_pipeline(data["pipeline_id"])
 
@@ -78,10 +162,14 @@ class PipelineService:
         record = db.get_pipeline(pipeline_id)
         if record is None:
             raise NotFoundError(f"流水线不存在: {pipeline_id}")
+        record["definition"] = normalize_definition(record["definition"])
         return record
 
     def list_pipelines(self) -> list[dict[str, Any]]:
-        return db.list_pipelines()
+        records = db.list_pipelines()
+        for record in records:
+            record["definition"] = normalize_definition(record["definition"])
+        return records
 
     def _default_pipeline(self) -> dict[str, Any]:
         record = db.get_pipeline(DEFAULT_PIPELINE_ID)
@@ -90,17 +178,48 @@ class PipelineService:
             if not pipelines:
                 raise NotFoundError("尚未配置流水线")
             record = pipelines[0]
+        record["definition"] = normalize_definition(record["definition"])
         return record
+
+    def _pipeline_for_source(self, source_id: str) -> dict[str, Any]:
+        """按输入源节点选择流水线;未匹配时使用默认流水线。"""
+
+        for record in db.list_pipelines():
+            definition = normalize_definition(record["definition"])
+            for source in definition["sources"]:
+                if not source.get("enabled", True):
+                    continue
+                if source_id in (source["source_id"], source["plugin_id"]):
+                    record["definition"] = definition
+                    return record
+        return self._default_pipeline()
 
     # ------------------------------------------------------------------- push
 
     async def push_event(self, case_id: str | None = None) -> dict[str, Any]:
-        input_source = self.registry.get("mock_jenkins")
-        event = input_source.build_alert(case_id)
-        pipeline_record = self._default_pipeline()
-        pipeline_def = pipeline_record["definition"]
-        configured = pipeline_def.get("orchestrator", "memory_orchestrator")
+        """Mock Jenkins 入口;保留原 API 行为,内部统一走 submit_external_event。"""
 
+        input_source = self.registry.get(DEFAULT_INPUT_SOURCE)
+        event = input_source.build_alert(case_id)
+        return await self.submit_external_event(event, DEFAULT_INPUT_SOURCE)
+
+    async def submit_external_event(
+        self, event: EventEnvelope | dict[str, Any], source_id: str
+    ) -> dict[str, Any]:
+        """输入源事件统一入口。
+
+        Airflow / 外部日志文件轮询得到的 monitor_alert,与 Mock Jenkins 共用
+        同一条 Run 创建、事件落库与内置编排器执行链路。
+        """
+
+        envelope = event if isinstance(event, EventEnvelope) else validate_event(event)
+        pipeline_record = self._pipeline_for_source(source_id)
+        return await self._start_run(envelope, pipeline_record["definition"], source_id)
+
+    async def _start_run(
+        self, event: EventEnvelope, pipeline_def: dict[str, Any], source_id: str
+    ) -> dict[str, Any]:
+        configured = pipeline_def.get("orchestrator", "memory_orchestrator")
         orchestrator, fallback_reason = await resolve_orchestrator(self.registry, configured)
         run_id = str(uuid4())
         run = {
@@ -118,6 +237,7 @@ class PipelineService:
             "started_at": db.utc_now_iso(),
             "finished_at": None,
             "input_event": event.model_dump(mode="json"),
+            "input_source": source_id,
         }
         db.create_run(run)
         event_dict = event.model_dump(mode="json")
@@ -125,35 +245,11 @@ class PipelineService:
         await self._publish(event_dict)
 
         context = {"run_id": run_id, "trace_id": event.trace_id, "input_event": event_dict}
-        if orchestrator.plugin_id == "memory_orchestrator":
-            try:
-                await orchestrator.start_pipeline(pipeline_def, context=context)
-            except DomainError as exc:
-                self._fail_run(run, exc)
-                raise
-        else:
-            try:
-                external_run_id = await orchestrator.start_pipeline(pipeline_def, context=context)
-                db.update_run(
-                    run_id,
-                    orchestrator_run_id=external_run_id,
-                    current_stage="airflow_triggered",
-                )
-            except DomainError as exc:
-                # 文档 7.4:Airflow API 不可用 → 内存编排器
-                memory, _ = await resolve_orchestrator(self.registry, "memory_orchestrator")
-                reason = f"{orchestrator.plugin_id} 触发失败({exc.message}),降级到内置编排器"
-                db.update_run(
-                    run_id,
-                    orchestrator_used="memory_orchestrator",
-                    fallback_reason=self._merge_reason(fallback_reason, reason),
-                )
-                run = db.get_run(run_id) or run
-                try:
-                    await memory.start_pipeline(pipeline_def, context=context)
-                except DomainError as memory_exc:
-                    self._fail_run(run, memory_exc)
-                    raise
+        try:
+            await orchestrator.start_pipeline(pipeline_def, context=context)
+        except DomainError as exc:
+            self._fail_run(run, exc)
+            raise
 
         return {
             "run_id": run_id,
@@ -162,6 +258,7 @@ class PipelineService:
             "orchestrator_configured": configured,
             "orchestrator_effective": (db.get_run(run_id) or run)["orchestrator_used"],
             "fallback_reason": (db.get_run(run_id) or run)["fallback_reason"],
+            "input_source": source_id,
             "event": event,
         }
 
@@ -178,6 +275,7 @@ class PipelineService:
             await self._execute_stages(run, pipeline_def, 0, input_event, run_context)
         except asyncio.CancelledError:
             db.update_run(run_id, status="stopped", finished_at=db.utc_now_iso())
+            self.notifications.schedule(run_id, "stopped")
             logger.info("pipeline cancelled", extra={"run_id": run_id})
             raise
         except DomainError as exc:
@@ -204,6 +302,7 @@ class PipelineService:
             stage = stages[index]
             if self._is_cancelled(run_id):
                 db.update_run(run_id, status="stopped", finished_at=db.utc_now_iso())
+                self.notifications.schedule(run_id, "stopped")
                 return
 
             db.update_run(run_id, current_stage=stage["agent"])
@@ -251,14 +350,17 @@ class PipelineService:
                     human_reason=reason,
                     current_stage=stage["agent"],
                 )
+                self.notifications.schedule(run_id, "waiting_human", reason)
                 return
             if output.status == EventStatus.REJECTED:
+                reject_reason = str(output.payload.get("review_summary") or "")
                 db.update_run(
                     run_id,
                     status="rejected",
                     finished_at=db.utc_now_iso(),
                     current_stage=stage["agent"],
                 )
+                self.notifications.schedule(run_id, "rejected", reject_reason or None)
                 return
 
             if stage.get("human_gate") and output.event_type == EventType.REVIEW_RESULT:
@@ -272,6 +374,7 @@ class PipelineService:
             finished_at=db.utc_now_iso(),
             current_stage=None,
         )
+        self.notifications.schedule(run_id, "completed")
 
     async def _build_dependencies(
         self,
@@ -422,6 +525,7 @@ class PipelineService:
                 human_reason=reason,
                 finished_at=db.utc_now_iso(),
             )
+            self.notifications.schedule(run_id, "rejected", reason)
             return self.get_trace(run["trace_id"])
 
         event_dict["status"] = EventStatus.PASSED.value
@@ -459,6 +563,7 @@ class PipelineService:
                 error_reason=str(exc),
                 finished_at=db.utc_now_iso(),
             )
+            self.notifications.schedule(run_id, "failed", str(exc))
             raise
         return self.get_trace(run["trace_id"])
 
@@ -560,6 +665,7 @@ class PipelineService:
             "error_reason": run["error_reason"],
             "started_at": run["started_at"],
             "finished_at": run["finished_at"],
+            "input_source": run.get("input_source"),
         }
 
     def get_trace(self, trace_id: str) -> dict[str, Any]:
@@ -588,21 +694,33 @@ class PipelineService:
         )
 
         stages: list[dict[str, Any]] = []
+        event_cursor = 0
         for stage in (pipeline or {}).get("definition", {}).get("stages", []):
-            matched = next(
-                (
-                    event
-                    for event in reversed(events)
-                    if event.get("source_agent") == stage["agent"]
-                ),
-                None,
-            )
+            # 画布允许重复 Agent;按出现顺序匹配事件,避免第二个同名阶段复用第一个事件。
+            matched = None
+            for index in range(event_cursor, len(events)):
+                if events[index].get("source_agent") == stage["agent"]:
+                    matched = events[index]
+                    event_cursor = index + 1
+                    break
             if matched is not None:
                 stage_status = matched.get("status")
             elif run["current_stage"] == stage["agent"]:
                 stage_status = "running"
             else:
                 stage_status = "pending"
+            event_payload = (matched or {}).get("payload", {})
+            prompt_text = event_payload.get("prompt_text")
+            prompt_source = event_payload.get("prompt_source")
+            if not isinstance(prompt_text, str) or not prompt_text.strip():
+                # 未执行/运行中阶段,以及旧数据没有快照时,按当前配置解析。
+                try:
+                    prompt_text, resolved_source = self.registry.resolve_agent_prompt(
+                        stage["agent"], stage.get("system_prompt")
+                    )
+                except ConfigurationError:
+                    prompt_text, resolved_source = "", "default"
+                prompt_source = resolved_source
             stages.append(
                 {
                     "agent": stage["agent"],
@@ -611,6 +729,8 @@ class PipelineService:
                     "event_id": matched.get("event_id") if matched else None,
                     "confidence": matched.get("confidence") if matched else None,
                     "latency_ms": (matched or {}).get("model_info", {}).get("latency_ms"),
+                    "prompt": prompt_text,
+                    "prompt_source": prompt_source,
                 }
             )
 
@@ -789,6 +909,7 @@ class PipelineService:
             raise ConflictError("运行已结束,不能停止")
         if run["status"] == "waiting_human":
             db.update_run(run_id, status="stopped", finished_at=db.utc_now_iso())
+            self.notifications.schedule(run_id, "stopped")
             return db.get_run(run_id) or run
 
         if run["orchestrator_used"] == "memory_orchestrator":
@@ -799,7 +920,15 @@ class PipelineService:
             if airflow is not None and run.get("orchestrator_run_id"):
                 await airflow.stop_pipeline(run["orchestrator_run_id"])
             db.update_run(run_id, status="stopped", finished_at=db.utc_now_iso())
+            self.notifications.schedule(run_id, "stopped")
         return db.get_run(run_id) or run
+
+    # ------------------------------------------------------------------ notify
+
+    def list_notifications(self, run_id: str) -> list[dict[str, Any]]:
+        if db.get_run(run_id) is None:
+            raise NotFoundError(f"运行不存在: {run_id}")
+        return db.list_run_notifications(run_id)
 
     # ------------------------------------------------------------------ helper
 
@@ -826,6 +955,7 @@ class PipelineService:
             error_reason=reason,
             finished_at=db.utc_now_iso(),
         )
+        self.notifications.schedule(run["run_id"], "failed", reason)
         logger.error(
             "pipeline failed",
             extra={

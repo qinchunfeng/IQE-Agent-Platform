@@ -1,4 +1,5 @@
 import type {
+  AirflowDag,
   DashboardData,
   DemoCase,
   ExperimentSummary,
@@ -8,6 +9,7 @@ import type {
   PluginCategory,
   PluginInfo,
   PushEventResult,
+  SourcePollItem,
   TraceDetail,
   TraceSummary,
 } from "./types";
@@ -74,6 +76,27 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ case_id: caseId }),
     }),
+
+  airflowDags: () => request<{ items: AirflowDag[] }>("/input-sources/airflow_input/dags"),
+  pollSource: (pluginId: string, limit = 1, lookbackMinutes?: number) =>
+    request<{ items: SourcePollItem[]; count: number }>(
+      `/input-sources/${pluginId}/poll`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          limit,
+          lookback_minutes: lookbackMinutes ?? null,
+        }),
+      },
+    ),
+  uploadLog: (filename: string, content: string) =>
+    request<{ filename: string; path: string; size: number }>(
+      "/input-sources/file_input/upload",
+      {
+        method: "POST",
+        body: JSON.stringify({ filename, content }),
+      },
+    ),
 
   plugins: (checkHealth = true) =>
     request<{ categories: PluginCategory[] }>(`/plugins?check_health=${checkHealth}`),

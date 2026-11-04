@@ -69,6 +69,8 @@ class IQEAgent(AgentPlugin):
             "version": PROMPT_VERSION,
             "source": self.prompt_source,
             "hash": hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12],
+            # 运行时快照:历史 Run 永远展示当时真正发送给模型的文本。
+            "text": prompt,
         }
 
     def _validate_payload(self, payload: dict[str, Any]) -> None:
@@ -155,6 +157,7 @@ class IQEAgent(AgentPlugin):
             safe_payload.setdefault("prompt_version", prompt_meta.get("version"))
             safe_payload.setdefault("prompt_source", prompt_meta.get("source"))
             safe_payload.setdefault("prompt_hash", prompt_meta.get("hash"))
+            safe_payload.setdefault("prompt_text", prompt_meta.get("text"))
         if fallback_reason:
             # 【已确认 Q10】降级原因放入 payload,便于 Trace 页面展示。
             safe_payload["llm_fallback_reason"] = fallback_reason

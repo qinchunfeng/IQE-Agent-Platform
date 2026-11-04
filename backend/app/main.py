@@ -23,6 +23,7 @@ from .errors import DomainError
 from .logging_config import configure_logging, get_logger
 from .models.api import (
     ExperimentSummaryOut,
+    FileUploadRequest,
     KnowledgeEntryOut,
     KnowledgeListOut,
     PipelineDefinition,
@@ -33,10 +34,12 @@ from .models.api import (
     PushEventOut,
     PushEventRequest,
     ReviewRequest,
+    SourcePollRequest,
 )
 from .plugins.registry import registry
 from .seed import seed_default_pipeline
 from .services.pipeline_service import PipelineService
+from .services.source_monitor import SourceMonitor
 
 configure_logging()
 logger = get_logger("iqe.api")
@@ -48,8 +51,11 @@ async def lifespan(app: FastAPI):
     service = PipelineService(registry)
     registry.set_runner(service.execute_run_task)
     seed_default_pipeline()
+    monitor = SourceMonitor(registry, service)
     app.state.registry = registry
     app.state.service = service
+    app.state.monitor = monitor
+    await monitor.start()
     logger.info(
         "IQE-Agent Platform started",
         extra={"host": APP_HOST, "port": APP_PORT, "version": APP_VERSION},
@@ -57,6 +63,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await monitor.stop()
         await registry.shutdown()
         logger.info("IQE-Agent Platform stopped")
 
@@ -211,6 +218,43 @@ async def push_mock_event(
     return result
 
 
+@app.get("/api/input-sources/airflow_input/dags")
+async def list_airflow_dags(request: Request) -> dict[str, Any]:
+    plugin = _registry(request).get("airflow_input")
+    dags = await plugin.list_dags()
+    return {
+        "items": [
+            {
+                "dag_id": dag.get("dag_id"),
+                "is_paused": dag.get("is_paused"),
+                "is_stale": dag.get("is_stale"),
+                "timetable_summary": dag.get("timetable_summary"),
+            }
+            for dag in dags
+        ]
+    }
+
+
+@app.post("/api/input-sources/file_input/upload")
+async def upload_external_log(
+    request: Request, payload: FileUploadRequest
+) -> dict[str, Any]:
+    plugin = _registry(request).get("file_input")
+    path = plugin.save_upload(payload.filename, payload.content)
+    return {"filename": path.name, "path": str(path), "size": path.stat().st_size}
+
+
+@app.post("/api/input-sources/{plugin_id}/poll")
+async def poll_input_source(
+    request: Request, plugin_id: str, payload: SourcePollRequest
+) -> dict[str, Any]:
+    monitor = request.app.state.monitor
+    items = await monitor.poll_plugin(
+        plugin_id, limit=payload.limit, lookback_minutes=payload.lookback_minutes
+    )
+    return {"items": items, "count": len(items)}
+
+
 # ------------------------------------------------------------------- pipelines
 
 
@@ -264,6 +308,11 @@ async def mark_knowledge(request: Request, run_id: str) -> dict[str, Any]:
 @app.post("/api/runs/{run_id}/stop")
 async def stop_run(request: Request, run_id: str) -> dict[str, Any]:
     return await _service(request).stop_run(run_id)
+
+
+@app.get("/api/runs/{run_id}/notifications")
+async def list_run_notifications(request: Request, run_id: str) -> dict[str, Any]:
+    return {"items": _service(request).list_notifications(run_id)}
 
 
 # ------------------------------------------------------------------- knowledge

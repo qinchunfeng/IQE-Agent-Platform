@@ -151,9 +151,35 @@ class PluginRegistry:
     def is_agent(self, plugin_id: str) -> bool:
         return self._plugin_class(plugin_id).plugin_type == "agent"
 
+    def is_type(self, plugin_id: str, plugin_type: str) -> bool:
+        return self._plugin_class(plugin_id).plugin_type == plugin_type
+
+    def input_source_ids(self) -> list[str]:
+        return [
+            plugin_id
+            for plugin_id, plugin_class in self._classes.items()
+            if plugin_class.plugin_type == "input_source"
+        ]
+
     def get_config(self, plugin_id: str) -> dict[str, Any]:
         self._plugin_class(plugin_id)
         return dict(self._states.get(plugin_id, {}).get("config", {}))
+
+    def resolve_agent_prompt(
+        self, plugin_id: str, stage_prompt: str | None = None
+    ) -> tuple[str, str]:
+        """解析 Agent 最终生效的 system prompt 与来源(阶段 > 插件 > 默认)。"""
+
+        stage_value = str(stage_prompt or "").strip()
+        if stage_value:
+            return stage_value, "stage"
+        plugin_class = self._plugin_class(plugin_id)
+        default_prompt = str(getattr(plugin_class, "default_system_prompt", "") or "")
+        configured = str(self.get_config(plugin_id).get("system_prompt") or "").strip()
+        if configured:
+            # 插件配置持久化了默认模板时,来源仍应标为“内置默认”。
+            return configured, ("default" if configured == default_prompt else "plugin")
+        return default_prompt, "default"
 
     def get(self, plugin_id: str) -> BasePlugin:
         plugin_class = self._plugin_class(plugin_id)
@@ -198,8 +224,12 @@ class PluginRegistry:
             return result
         try:
             instance = self._instantiate(plugin_id)
+            # 外部输入源(如 Airflow)允许声明更长的健康检查预算;默认仍为 2 秒。
+            timeout = float(
+                getattr(instance, "health_timeout_seconds", HEALTH_CHECK_TIMEOUT_SECONDS)
+            )
             healthy, message = await asyncio.wait_for(
-                instance.health(), timeout=HEALTH_CHECK_TIMEOUT_SECONDS
+                instance.health(), timeout=timeout
             )
             result = {
                 "healthy": bool(healthy),

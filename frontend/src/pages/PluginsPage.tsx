@@ -110,8 +110,8 @@ export function PluginsPage() {
       <div className="alert alert-info inline-alert">
         <Icon name="alert" size={16} />
         <span>
-          文档 7.4:Airflow / Qoder CN 不可用时自动降级。Airflow 默认禁用;Qoder CN
-          未配置凭据时,流水线会使用 Mock LLM,并在 Trace 中记录降级原因。
+          Airflow 已作为输入源插件:在配置中填写平台地址与 DAG ID(留空监控全部),默认禁用;
+          Qoder CN 未配置凭据时,流水线会使用 Mock LLM,并在 Trace 中记录降级原因。
         </span>
       </div>
 

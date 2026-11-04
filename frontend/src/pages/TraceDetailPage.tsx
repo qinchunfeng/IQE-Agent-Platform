@@ -22,6 +22,7 @@ import {
   formatDateTime,
   formatDuration,
   formatLatency,
+  inputSourceLabel,
   isActiveRun,
   orchestratorLabel,
   payloadString,
@@ -297,6 +298,10 @@ export function TraceDetailPage() {
           <div>
             <span>实际编排器</span>
             <strong>{orchestratorLabel(run.orchestrator_used)}</strong>
+          </div>
+          <div>
+            <span>输入源</span>
+            <strong>{inputSourceLabel(run.input_source)}</strong>
           </div>
         </div>
 

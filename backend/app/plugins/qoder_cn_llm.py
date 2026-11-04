@@ -21,6 +21,28 @@ from .base import LLMProviderPlugin
 _JSON_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 
 
+def _extract_json_object(raw: Any) -> dict[str, Any] | None:
+    """兼容真实模型的 ```json 围栏/前后解释文字,只提取第一个 JSON 对象。"""
+
+    if isinstance(raw, dict):
+        return raw
+    text = _JSON_FENCE.sub("", str(raw or "")).strip()
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        pass
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end <= start:
+        return None
+    try:
+        parsed = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 class QoderCNLLMPlugin(LLMProviderPlugin):
     plugin_id = "qoder_cn"
     display_name = "Qoder CN Cloud"
@@ -123,16 +145,9 @@ class QoderCNLLMPlugin(LLMProviderPlugin):
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise SchemaValidationFailure("Qoder CN 响应结构不符合预期") from exc
 
-        if isinstance(raw_content, dict):
-            content: Any = raw_content
-        else:
-            text = _JSON_FENCE.sub("", str(raw_content)).strip()
-            try:
-                content = json.loads(text)
-            except json.JSONDecodeError as exc:
-                raise SchemaValidationFailure("Qoder CN 响应不是合法 JSON") from exc
-        if not isinstance(content, dict):
-            raise SchemaValidationFailure("Qoder CN 响应必须是 JSON 对象")
+        content = _extract_json_object(raw_content)
+        if content is None:
+            raise SchemaValidationFailure("Qoder CN 响应不是合法 JSON 对象")
 
         usage = body.get("usage") or {}
         cost_token = int(usage.get("total_tokens", 0) or 0)

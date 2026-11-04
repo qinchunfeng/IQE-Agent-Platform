@@ -85,8 +85,19 @@ export const PLUGIN_STATE_LABELS: Record<string, string> = {
 
 export function orchestratorLabel(pluginId: string): string {
   if (pluginId === "memory_orchestrator") return "内置编排引擎";
-  if (pluginId === "airflow_orchestrator") return "Airflow";
+  if (pluginId === "airflow_orchestrator") return "Airflow(已改为输入源)";
   return pluginId;
+}
+
+export const INPUT_SOURCE_LABELS: Record<string, string> = {
+  mock_jenkins: "Jenkins / Mock Jenkins",
+  airflow_input: "Airflow 输入源",
+  file_input: "外部日志文件",
+};
+
+export function inputSourceLabel(pluginId: string | null | undefined): string {
+  if (!pluginId) return "—";
+  return INPUT_SOURCE_LABELS[pluginId] ?? pluginId;
 }
 
 export function formatDuration(seconds: number | null | undefined): string {

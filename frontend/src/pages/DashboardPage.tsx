@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { Icon } from "../Icon";
+import { AgentInsightDrawer } from "../components/AgentInsightDrawer";
 import { PipelineStrip } from "../components/PipelineStrip";
 import {
   Badge,
@@ -13,12 +14,15 @@ import {
   StatusBadge,
 } from "../components/Ui";
 import { useToast } from "../Toast";
-import type { DashboardData } from "../types";
+import type { DashboardData, TraceDetail } from "../types";
 import {
+  AGENT_LABELS,
   formatDateTime,
   formatDuration,
+  isActiveRun,
   orchestratorLabel,
   shortId,
+  statusLabel,
   tatSourceLabel,
 } from "../utils";
 
@@ -28,6 +32,10 @@ export function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pushing, setPushing] = useState(false);
+  const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
+  const [trace, setTrace] = useState<TraceDetail | null>(null);
+  const [traceLoading, setTraceLoading] = useState(false);
+  const [drawerStage, setDrawerStage] = useState<number | null>(null);
   const navigate = useNavigate();
   const { showToast } = useToast();
 
@@ -46,6 +54,51 @@ export function DashboardPage() {
     const timer = window.setInterval(load, 3000);
     return () => window.clearInterval(timer);
   }, [load]);
+
+  useEffect(() => {
+    const runs = data?.recent_traces ?? [];
+    if (!runs.length) {
+      setSelectedTraceId(null);
+      return;
+    }
+    if (selectedTraceId && runs.some((run) => run.trace_id === selectedTraceId)) {
+      return;
+    }
+    const preferred = runs.find((run) => isActiveRun(run.status)) ?? runs[0];
+    setSelectedTraceId(preferred.trace_id);
+  }, [data, selectedTraceId]);
+
+  useEffect(() => {
+    if (!selectedTraceId) {
+      setTrace(null);
+      return;
+    }
+    let cancelled = false;
+    const loadTrace = async () => {
+      try {
+        const result = await api.trace(selectedTraceId);
+        if (!cancelled) setTrace(result);
+      } catch {
+        if (!cancelled) setTrace(null);
+      } finally {
+        if (!cancelled) setTraceLoading(false);
+      }
+    };
+    setTraceLoading(true);
+    loadTrace();
+    const timer = window.setInterval(loadTrace, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [selectedTraceId]);
+
+  const selectRun = (traceId: string) => {
+    setSelectedTraceId(traceId);
+    setTrace(null);
+    setTraceLoading(true);
+    setDrawerStage(null);
+  };
 
   const pushDefault = async () => {
     setPushing(true);
@@ -66,6 +119,25 @@ export function DashboardPage() {
 
   const stats = data?.stats;
   const latest = data?.recent_traces[0];
+  const selectedRun =
+    data?.recent_traces.find((run) => run.trace_id === selectedTraceId) ?? null;
+  const drawerStageInfo =
+    drawerStage !== null && trace ? trace.stages[drawerStage] ?? null : null;
+  const drawerStageConfig =
+    drawerStage !== null && trace
+      ? trace.pipeline?.definition.stages[drawerStage] ?? null
+      : null;
+  const drawerEvent = drawerStageInfo?.event_id
+    ? trace?.events.find((event) => event.event_id === drawerStageInfo.event_id) ?? null
+    : null;
+  const drawerEventIndex = drawerEvent
+    ? trace?.events.findIndex((event) => event.event_id === drawerEvent.event_id) ?? -1
+    : -1;
+  const drawerInputEvent = drawerEvent
+    ? drawerEventIndex > 0
+      ? trace?.events[drawerEventIndex - 1] ?? trace?.run.input_event ?? null
+      : trace?.run.input_event ?? null
+    : trace?.events.at(-1) ?? trace?.run.input_event ?? null;
 
   return (
     <div className="page-stack">
@@ -156,14 +228,57 @@ export function DashboardPage() {
 
       <SectionCard
         title="平台流水线"
-        subtitle="文档 4.2 IQE Validation v1 · 6 个 Agent 串行执行"
+        subtitle={
+          selectedRun
+            ? `${selectedRun.pipeline_id} · ${
+                isActiveRun(selectedRun.status)
+                  ? `当前阶段:${
+                      selectedRun.current_stage
+                        ? AGENT_LABELS[selectedRun.current_stage] ?? selectedRun.current_stage
+                        : "运行中"
+                    }`
+                  : `最近状态:${statusLabel(selectedRun.status)}`
+              }`
+            : "文档 4.2 IQE Validation v1 · 6 个 Agent 串行执行"
+        }
         action={
           <Link className="text-link" to="/canvas">
             打开画布 <Icon name="arrow" size={14} />
           </Link>
         }
       >
-        <PipelineStrip />
+        <div className="pipeline-toolbar">
+          <label className="run-picker">
+            <span>运行实例</span>
+            <select
+              value={selectedTraceId ?? ""}
+              onChange={(event) => selectRun(event.target.value)}
+              disabled={!data?.recent_traces.length}
+            >
+              {(data?.recent_traces ?? []).map((run) => (
+                <option key={run.trace_id} value={run.trace_id}>
+                  {statusLabel(run.status)} · {run.title ?? run.case_id ?? shortId(run.trace_id)}{" "}
+                  · {formatDateTime(run.started_at)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {selectedRun ? <StatusBadge status={selectedRun.status} /> : null}
+          {selectedRun && isActiveRun(selectedRun.status) ? (
+            <span className="pipeline-live">
+              <span className="live-dot" />
+              {selectedRun.current_stage
+                ? `${AGENT_LABELS[selectedRun.current_stage] ?? selectedRun.current_stage} 执行中`
+                : "运行中"}
+            </span>
+          ) : null}
+          <span className="pipeline-hint">点击 Agent 查看该阶段的输入、处理与输出</span>
+        </div>
+        <PipelineStrip
+          stages={trace?.stages}
+          selectedIndex={drawerStage}
+          onSelectStage={trace ? setDrawerStage : undefined}
+        />
       </SectionCard>
 
       <div className="dashboard-columns">
@@ -306,6 +421,21 @@ export function DashboardPage() {
           </SectionCard>
         </div>
       </div>
+
+      <AgentInsightDrawer
+        open={drawerStage !== null}
+        stageIndex={drawerStage}
+        stage={drawerStageInfo}
+        stageConfig={drawerStageConfig}
+        event={drawerEvent}
+        inputEvent={drawerInputEvent}
+        run={trace?.run ?? null}
+        loading={traceLoading}
+        onClose={() => setDrawerStage(null)}
+        onOpenTrace={() => {
+          if (selectedTraceId) navigate(`/traces/${selectedTraceId}`);
+        }}
+      />
     </div>
   );
 }
