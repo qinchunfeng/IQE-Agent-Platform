@@ -17,7 +17,6 @@ from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from . import db
 from .config import API_TOKEN, APP_HOST, APP_NAME, APP_PORT, APP_VERSION, FRONTEND_ORIGINS
 from .errors import DomainError
 from .logging_config import configure_logging, get_logger
@@ -214,8 +213,7 @@ async def list_mock_cases(request: Request) -> dict[str, Any]:
 async def push_mock_event(
     request: Request, payload: PushEventRequest
 ) -> dict[str, Any]:
-    result = await _service(request).push_event(payload.case_id)
-    return result
+    return await _service(request).push_event(payload.case_id)
 
 
 @app.get("/api/input-sources/airflow_input/dags")

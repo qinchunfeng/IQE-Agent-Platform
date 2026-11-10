@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import copy
 from datetime import datetime, timezone
+from functools import partial
 from typing import Any
 from uuid import uuid4
 
@@ -96,7 +97,7 @@ def normalize_definition(definition: dict[str, Any]) -> dict[str, Any]:
             }
         ]
     normalized_sources: list[dict[str, Any]] = []
-    for index, source in enumerate(sources):
+    for source in sources:
         item = dict(source)
         plugin_id = str(item.get("plugin_id") or item.get("source_id") or "").strip()
         if not plugin_id:
@@ -319,10 +320,11 @@ class PipelineService:
             try:
                 # 文档 7.1:Agent 在独立线程执行,单插件崩溃不拖垮平台。
                 # 【已确认 Q16】超时只保证调用方失败;线程本身无法被 Python 强杀。
+                # partial 在进入循环时即绑定当前事件,lambda 则会读到下一轮的值。
                 output = await agent.run_isolated(
-                    lambda: agent.run(current_event), timeout=AGENT_TIMEOUT_SECONDS
+                    partial(agent.run, current_event), timeout=AGENT_TIMEOUT_SECONDS
                 )
-            except asyncio.TimeoutError as exc:
+            except TimeoutError as exc:
                 raise PluginUnavailableError(
                     f"{stage['agent']} 执行超时(超过 {AGENT_TIMEOUT_SECONDS:g} 秒)"
                 ) from exc

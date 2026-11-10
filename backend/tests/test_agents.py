@@ -15,10 +15,10 @@ from app.plugins.agents.reproduction_agent import ReproductionAgent
 from app.plugins.agents.reviewer_agent import ReviewerAgent
 from app.plugins.agents.ticket_agent import TicketAgent
 from app.plugins.agents.triage_agent import TriageAgent
+from app.plugins.memory_vector_kb import MemoryVectorKBPlugin
 from app.plugins.mock_jarvis import MockJarvisPlugin
 from app.plugins.mock_jenkins import MockJenkinsPlugin
 from app.plugins.mock_llm import MockLLMPlugin
-from app.plugins.memory_vector_kb import MemoryVectorKBPlugin
 
 
 def _event(event_type: EventType, confidence: float, payload: dict) -> EventEnvelope:

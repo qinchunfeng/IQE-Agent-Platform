@@ -1,0 +1,33 @@
+# 第 1 层静态检查配置（见 AGENTS.md「怎么算完成」）。
+# 规则集是"当前全绿"的强制集，不是建议集：新增违规会让 ./scripts/verify.sh 失败。
+# 覆盖 backend/ 与 scripts/ —— harness 脚本本身和被测代码守同一条规矩。
+line-length = 120
+target-version = "py312"
+# 配置在仓库根，但 Python 包的根是 backend/；不声明 src，isort 会把 `from app...`
+# 当第三方库排序，测试文件的 import 分组会被整体判为"未排序"。
+src = ["backend"]
+extend-exclude = ["frontend", "docs", "backend/.venv", "backend/data"]
+
+[lint]
+select = [
+    "E4",  # import 位置与缩进
+    "E7",  # 语句歧义
+    "E9",  # 语法错误
+    "F",   # pyflakes：未使用 import、未定义名字
+    "I",   # isort：import 顺序
+    "UP",  # py312 应有的现代写法
+    "B",   # bugbear：闭包晚绑定、zip strict 等真实缺陷
+    "C4",  # 冗余推导式
+    "SIM", # 可简化的异常/条件
+    "RET", # return 路径一致性
+]
+# `datetime.timezone.utc` 与 `datetime.UTC` 是同一个对象，全仓库统一用前者；
+# 为 21 处无关风格改动不值得混进功能 diff，故只豁免这一条 UP 子规则。
+ignore = ["UP017"]
+
+[lint.per-file-ignores]
+# 测试里多个 with 嵌套是刻意的断言分组，不报合并建议。
+"backend/tests/*" = ["SIM117"]
+
+[lint.isort]
+known-first-party = ["app"]

@@ -42,7 +42,7 @@ class MockJenkinsPlugin(InputSourcePlugin):
         artifact_url = (
             f"mock://jenkins/{case['job_name']}/{case['build_number']}/console"
         )
-        event = EventEnvelope(
+        return EventEnvelope(
             event_id=str(uuid4()),
             event_type=EventType.MONITOR_ALERT,
             source_agent=self.plugin_id,
@@ -70,4 +70,3 @@ class MockJenkinsPlugin(InputSourcePlugin):
                 "artifact_url": artifact_url,
             },
         )
-        return event

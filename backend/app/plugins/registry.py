@@ -11,15 +11,16 @@ import importlib
 import inspect
 import pkgutil
 import threading
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Iterable
+from typing import Any
 
 from .. import db
 from ..config import HEALTH_CHECK_TIMEOUT_SECONDS
 from ..errors import ConfigurationError, NotFoundError, PluginUnavailableError
 from ..logging_config import get_logger
 from ..security import config_defaults, mask_config, validate_plugin_config
-from .base import BasePlugin, PLUGIN_TYPE_LABELS, is_plugin_class
+from .base import PLUGIN_TYPE_LABELS, BasePlugin, is_plugin_class
 
 logger = get_logger("iqe.plugins")
 
@@ -236,7 +237,7 @@ class PluginRegistry:
                 "message": str(message),
                 "checked_at": _now_iso(),
             }
-        except asyncio.TimeoutError:
+        except TimeoutError:
             result = {
                 "healthy": False,
                 "message": "健康检查超时",
@@ -254,13 +255,13 @@ class PluginRegistry:
     async def health_many(self, plugin_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
         ids = list(plugin_ids)
         results = await asyncio.gather(*(self.health(plugin_id) for plugin_id in ids))
-        return dict(zip(ids, results))
+        return dict(zip(ids, results, strict=True))
 
     def plugin_summary(self, plugin_id: str, health: dict[str, Any] | None = None) -> dict[str, Any]:
         plugin_class = self._plugin_class(plugin_id)
         state = self._states.get(plugin_id, {})
         instance = self._instances.get(plugin_id)
-        summary = {
+        return {
             "plugin_id": plugin_id,
             "display_name": plugin_class.display_name,
             "description": plugin_class.description,
@@ -276,7 +277,6 @@ class PluginRegistry:
             "state": instance.state if instance else "registered",
             "health": health if health is not None else self._health.get(plugin_id),
         }
-        return summary
 
     async def list_plugins(self, check_health: bool = False) -> list[dict[str, Any]]:
         ids = list(self._classes)

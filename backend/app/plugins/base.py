@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Awaitable, Callable, ClassVar
+from typing import Any, ClassVar
 
 from ..security import validate_plugin_config
 
