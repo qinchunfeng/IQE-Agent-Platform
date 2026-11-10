@@ -9,7 +9,8 @@
 
 | 指标 | 状态 |
 |---|---|
-| **最新 commit** | `44aa943` feat(harness) 三层门禁；本轮补齐依次为 `0a677fc` AGENTS.md 入口 → `bef9e91` 静态工具链 → `8705a70` 状态文档 → `44aa943` |
+| **Harness 补齐提交** | `0a677fc` AGENTS.md 入口 → `bef9e91` 静态工具链 → `8705a70` 状态文档 → `44aa943` 三层门禁 → `4693d92` 哈希与提交顺序 |
+| **最新 commit** | 以 `git log -1 --oneline` 为准：本字段若写死具体哈希，每次提交即自我过期，故不记录 |
 | **验收命令** | ✅ `./scripts/verify.sh` 三层全绿 (ruff/mypy/eslint/tsc → pytest/build → 真实进程冒烟)，用时 ~9s |
 | **后端测试** | ✅ 57/57 passed (1.52s) |
 | **前端构建** | ✅ tsc + vite build 通过 |
