@@ -12,9 +12,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .. import db
-from ..errors import NotificationError
+from ..errors import NotificationError, PluginUnavailableError
 from ..logging_config import get_logger
 from ..models.event import EventType
+from ..plugins.capabilities import as_notifier
 from ..plugins.registry import PluginRegistry
 
 logger = get_logger("iqe.notification")
@@ -50,7 +51,9 @@ class NotificationService:
             return None
 
         try:
-            plugin = self.registry.get(NOTIFIER_PLUGIN_ID)
+            plugin = as_notifier(self.registry.get(NOTIFIER_PLUGIN_ID))
+            if plugin is None:
+                raise PluginUnavailableError(f"插件未实现通知投递能力: {NOTIFIER_PLUGIN_ID}")
         except Exception as exc:  # noqa: BLE001 - 通知失败不能影响主链路
             logger.warning(
                 "notifier unavailable",

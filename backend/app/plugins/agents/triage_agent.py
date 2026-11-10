@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from ...models.event import EventEnvelope, EventStatus
+from ..capabilities import as_knowledge
 from .base import IQEAgent, require_number, require_str
 
 
@@ -28,7 +29,7 @@ class TriageAgent(IQEAgent):
         event = self.ensure_input(input_event)
         log_excerpt = str(event.payload.get("log_excerpt", ""))
 
-        kb = self.dependencies.get("knowledge_base")
+        kb = as_knowledge(self.injected("knowledge_base"))
         kb_entries = kb.search(log_excerpt) if kb is not None and log_excerpt else []
 
         context = {

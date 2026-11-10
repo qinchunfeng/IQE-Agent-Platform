@@ -360,11 +360,11 @@ class FeishuNotifierPlugin(ToolPlugin):
         return await self._send_app(card)
 
     def _client(self) -> httpx.AsyncClient:
-        # 测试可通过 dependencies["http_transport"] 注入 MockTransport,
+        # 测试可通过 resolved_dependencies["http_transport"] 注入 MockTransport,
         # 避免真实网络请求;生产环境不传即使用默认传输。
         return httpx.AsyncClient(
             timeout=float(self.config.get("timeout_seconds", 10)),
-            transport=self.dependencies.get("http_transport"),
+            transport=self.resolved_dependencies.get("http_transport"),
         )
 
     async def _send_webhook(self, card: dict[str, Any]) -> dict[str, Any]:
@@ -457,10 +457,12 @@ def _check_response(response: httpx.Response, label: str) -> dict[str, Any]:
         raise NotificationError(f"{label}响应结构不符合预期", retryable=False)
     code = body.get("code", body.get("StatusCode", 0))
     if code not in (0, None):
-        try:
-            retryable = int(code) in _RETRYABLE_FEISHU_CODES
-        except (TypeError, ValueError):
-            retryable = False
+        retryable = False
+        if isinstance(code, (int, float, str)):
+            try:
+                retryable = int(code) in _RETRYABLE_FEISHU_CODES
+            except ValueError:
+                retryable = False
         raise NotificationError(
             f"{label}返回 code={code}",
             retryable=retryable,

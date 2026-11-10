@@ -15,11 +15,13 @@ from uuid import uuid4
 from ...errors import LLMUnavailableError, SchemaValidationFailure
 from ...models.event import EventEnvelope, EventStatus, ModelInfo, validate_event
 from ..base import AgentPlugin
+from ..capabilities import as_llm_provider
 from .prompts import AGENT_PROMPTS, PROMPT_VERSION
 
 
 class IQEAgent(AgentPlugin):
-    config_schema: dict[str, dict[str, Any]] = {}
+    # __init_subclass__ 会往里补 system_prompt,因此是实例可改的类级清单。
+    config_schema: ClassVar[dict[str, dict[str, Any]]] = {}
     # 【已确认 Q2】payload v0 的必填字段;字段名见产品设计说明,
     # 未列出的扩展字段仍允许存在,避免把未确认的外部输出直接拒绝。
     payload_required_fields: ClassVar[tuple[str, ...]] = ()
@@ -56,7 +58,7 @@ class IQEAgent(AgentPlugin):
         super().__init__(config, dependencies)
         configured = str(self.config.get("system_prompt") or "").strip()
         self.system_prompt = configured or self.default_system_prompt
-        source = str(self.dependencies.get("prompt_source", "plugin"))
+        source = str(self.resolved_dependencies.get("prompt_source", "plugin"))
         if source == "plugin" and (
             not configured or configured == self.default_system_prompt
         ):
@@ -98,11 +100,20 @@ class IQEAgent(AgentPlugin):
             )
         return event
 
+    def injected(self, role: str) -> Any:
+        """依赖注入表里混着插件实例与标量(prompt_source / run_context 等)。
+
+        取用后要用 capabilities 的 `as_*` 窄化,不要在 Any 上直接调能力方法——
+        不符或缺失一律按"未注入"处理,交给各 Agent 自己的降级/报错分支(文档 7.4)。
+        """
+
+        return self.resolved_dependencies.get(role)
+
     async def call_llm(
         self, task: str, context: dict[str, Any]
     ) -> tuple[dict[str, Any], str | None]:
-        llm = self.dependencies.get("llm_provider")
-        mock = self.dependencies.get("mock_llm")
+        llm = as_llm_provider(self.injected("llm_provider"))
+        mock = as_llm_provider(self.injected("mock_llm"))
         if llm is None:
             llm = mock
         if llm is None:
@@ -125,7 +136,7 @@ class IQEAgent(AgentPlugin):
             result = await mock.chat_completion(messages, {"task": task, "context": context})
             fallback_reason = f"{getattr(llm, 'plugin_id', 'llm')} 降级: {exc.message}"
 
-        if not isinstance(result, dict) or not isinstance(result.get("content"), dict):
+        if not isinstance(result.get("content"), dict):
             raise SchemaValidationFailure("LLM 响应缺少 content 对象")
         try:
             ModelInfo(

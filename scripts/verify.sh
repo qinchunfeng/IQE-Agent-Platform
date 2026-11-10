@@ -31,8 +31,8 @@ cd "$ROOT/backend"
   "backend/.venv 里没装静态检查工具链" \
   "uv pip install -p backend/.venv/bin/python -r backend/requirements-dev.txt"
 .venv/bin/mypy app || die "层 1 后端类型检查" \
-  "mypy 报告类型错误（已收口的模块见 backend/mypy.ini，豁免清单在文件头）" \
-  "新代码必须满足类型；扩豁免前先确认不是 FEATURES.md Task 24 已登记的债"
+  "mypy 报告类型错误（backend/mypy.ini 现在只有全局段，0 个模块豁免）" \
+  "改代码修根因，不要加 disable_error_code —— test_plugin_contracts.py 会因为出现豁免而失败"
 
 step "层 1/3 静态检查 :: frontend eslint"
 cd "$ROOT/frontend"

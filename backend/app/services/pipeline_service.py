@@ -37,6 +37,13 @@ from ..errors import (
 from ..logging_config import get_logger
 from ..models.api import PipelineDefinition
 from ..models.event import EventEnvelope, EventStatus, EventType, validate_event
+from ..plugins.capabilities import (
+    as_alert_builder,
+    as_event_bus,
+    as_knowledge,
+    as_orchestrator,
+    as_ticket_tool,
+)
 from ..plugins.registry import PluginRegistry
 from .fallback import resolve_llm, resolve_optional_plugin, resolve_orchestrator
 from .notification_service import NotificationService
@@ -200,7 +207,9 @@ class PipelineService:
     async def push_event(self, case_id: str | None = None) -> dict[str, Any]:
         """Mock Jenkins 入口;保留原 API 行为,内部统一走 submit_external_event。"""
 
-        input_source = self.registry.get(DEFAULT_INPUT_SOURCE)
+        input_source = as_alert_builder(self.registry.get(DEFAULT_INPUT_SOURCE))
+        if input_source is None:
+            raise PluginUnavailableError(f"输入源不具备事件构造能力: {DEFAULT_INPUT_SOURCE}")
         event = input_source.build_alert(case_id)
         return await self.submit_external_event(event, DEFAULT_INPUT_SOURCE)
 
@@ -480,7 +489,7 @@ class PipelineService:
             "source_case_id": payload.get("case_id"),
             "confidence": draft_event.get("confidence"),
         }
-        jira = resolve_optional_plugin(self.registry, "jira_mock")
+        jira = as_ticket_tool(resolve_optional_plugin(self.registry, "jira_mock"))
         if jira is None:
             raise PluginUnavailableError("Mock Jira 不可用,无法创建工单")
         try:
@@ -582,7 +591,7 @@ class PipelineService:
         if triage is None:
             raise ConflictError("未找到 Triage 结果")
 
-        kb = resolve_optional_plugin(self.registry, "memory_vector_kb")
+        kb = as_knowledge(resolve_optional_plugin(self.registry, "memory_vector_kb"))
         if kb is None:
             raise PluginUnavailableError("内存向量知识库不可用")
 
@@ -607,7 +616,7 @@ class PipelineService:
         )
 
     def list_knowledge(self, query: str | None = None) -> list[dict[str, Any]]:
-        kb = resolve_optional_plugin(self.registry, "memory_vector_kb")
+        kb = as_knowledge(resolve_optional_plugin(self.registry, "memory_vector_kb"))
         if query and query.strip():
             if kb is None:
                 return []
@@ -801,7 +810,7 @@ class PipelineService:
             "mixed" if len(tat_sources) > 1 else (next(iter(tat_sources)) if tat_sources else None)
         )
 
-        kb = resolve_optional_plugin(self.registry, "memory_vector_kb")
+        kb = as_knowledge(resolve_optional_plugin(self.registry, "memory_vector_kb"))
         knowledge_count = len(kb.list_entries()) if kb is not None else len(db.list_knowledge())
 
         return {
@@ -915,10 +924,14 @@ class PipelineService:
             return db.get_run(run_id) or run
 
         if run["orchestrator_used"] == "memory_orchestrator":
-            memory = self.registry.get("memory_orchestrator")
+            memory = as_orchestrator(self.registry.get("memory_orchestrator"))
+            if memory is None:
+                raise PluginUnavailableError("内置编排器未实现编排引擎能力")
             await memory.stop_pipeline(run_id)
         else:
-            airflow = resolve_optional_plugin(self.registry, run["orchestrator_used"])
+            airflow = as_orchestrator(
+                resolve_optional_plugin(self.registry, run["orchestrator_used"])
+            )
             if airflow is not None and run.get("orchestrator_run_id"):
                 await airflow.stop_pipeline(run["orchestrator_run_id"])
             db.update_run(run_id, status="stopped", finished_at=db.utc_now_iso())
@@ -940,7 +953,9 @@ class PipelineService:
         ):
             return
         try:
-            bus = self.registry.get("memory_event_bus")
+            bus = as_event_bus(self.registry.get("memory_event_bus"))
+            if bus is None:
+                raise PluginUnavailableError("内存事件总线未实现发布能力")
             await bus.publish(event)
         except Exception as exc:  # noqa: BLE001 - 事件总线故障不能阻断主链路
             logger.warning(

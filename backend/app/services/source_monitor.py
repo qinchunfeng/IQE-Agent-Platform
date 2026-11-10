@@ -14,6 +14,7 @@ from typing import Any
 
 from ..errors import DomainError, PluginUnavailableError
 from ..logging_config import get_logger
+from ..plugins.capabilities import as_alert_source
 from ..plugins.registry import PluginRegistry
 from .pipeline_service import PipelineService
 
@@ -88,11 +89,13 @@ class SourceMonitor:
                 raise PluginUnavailableError(f"输入源插件已禁用: {plugin_id}")
             if not self.registry.is_type(plugin_id, "input_source"):
                 raise PluginUnavailableError(f"插件不是输入源: {plugin_id}")
-            plugin = self.registry.get(plugin_id)
-            if not getattr(plugin, "capabilities", {}).get("polling"):
+            source = as_alert_source(self.registry.get(plugin_id))
+            if source is None:
+                raise PluginUnavailableError(f"输入源未实现事件采集能力: {plugin_id}")
+            if not source.capabilities.get("polling"):
                 return []
             try:
-                events = await plugin.collect_alerts(
+                events = await source.collect_alerts(
                     limit=limit, lookback_minutes=lookback_minutes
                 )
             except PluginUnavailableError as exc:

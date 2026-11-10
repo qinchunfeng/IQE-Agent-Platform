@@ -13,15 +13,25 @@ from typing import Any
 
 from ..errors import NotFoundError, PluginUnavailableError
 from ..plugins.base import BasePlugin
+from ..plugins.capabilities import (
+    LLMProviderCapability,
+    OrchestratorCapability,
+    as_llm_provider,
+    as_orchestrator,
+)
 from ..plugins.registry import PluginRegistry
 
 
 async def resolve_llm(
     registry: PluginRegistry, preferred_id: str | None
-) -> tuple[BasePlugin, BasePlugin | None, str | None]:
+) -> tuple[LLMProviderCapability, LLMProviderCapability | None, str | None]:
     """返回 (主 LLM, Mock LLM, 降级原因)。"""
 
-    mock = registry.get("mock_llm") if registry.has("mock_llm") and registry.is_enabled("mock_llm") else None
+    mock = (
+        as_llm_provider(registry.get("mock_llm"))
+        if registry.has("mock_llm") and registry.is_enabled("mock_llm")
+        else None
+    )
     preferred = preferred_id or "mock_llm"
     if preferred == "mock_llm":
         if mock is None:
@@ -41,17 +51,22 @@ async def resolve_llm(
         if mock is None:
             raise PluginUnavailableError(f"LLM 不可用且 Mock LLM 已禁用: {health['message']}")
         return mock, mock, f"LLM 不可用({health['message']}),降级到 Mock LLM"
-    return registry.get(preferred), mock, None
+    primary = as_llm_provider(registry.get(preferred))
+    if primary is None:
+        raise PluginUnavailableError(f"插件未实现 LLM 提供商能力: {preferred}")
+    return primary, mock, None
 
 
 async def resolve_orchestrator(
     registry: PluginRegistry, preferred_id: str | None
-) -> tuple[BasePlugin, str | None]:
+) -> tuple[OrchestratorCapability, str | None]:
     """返回 (实际编排器, 降级原因)。"""
 
     if not registry.has("memory_orchestrator") or not registry.is_enabled("memory_orchestrator"):
         raise PluginUnavailableError("内置编排器被禁用,平台无法运行")
-    memory = registry.get("memory_orchestrator")
+    memory = as_orchestrator(registry.get("memory_orchestrator"))
+    if memory is None:
+        raise PluginUnavailableError("内置编排器未实现编排引擎能力,平台无法运行")
     preferred = preferred_id or "memory_orchestrator"
     if preferred == "memory_orchestrator":
         return memory, None
@@ -63,7 +78,10 @@ async def resolve_orchestrator(
     health = await registry.health(preferred)
     if not health["healthy"]:
         return memory, f"编排器不可用({health['message']}),降级到内置编排器"
-    return registry.get(preferred), None
+    airflow = as_orchestrator(registry.get(preferred))
+    if airflow is None:
+        return memory, f"编排器 {preferred} 未实现编排引擎能力,降级到内置编排器"
+    return airflow, None
 
 
 def resolve_optional_plugin(

@@ -23,7 +23,8 @@ class ReportingAgent(IQEAgent):
 
     async def run(self, input_event: EventEnvelope | dict[str, Any]) -> EventEnvelope:
         event = self.ensure_input(input_event)
-        run_context = self.dependencies.get("run_context") or {}
+        raw_run_context = self.resolved_dependencies.get("run_context")
+        run_context: dict[str, Any] = raw_run_context if isinstance(raw_run_context, dict) else {}
         tat_seconds = int(run_context.get("tat_seconds", 0))
         context = {
             "case_id": event.payload.get("case_id"),

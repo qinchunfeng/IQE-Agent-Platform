@@ -12,6 +12,7 @@ from typing import Any
 
 from ...config import DEFAULT_CONFIDENCE_THRESHOLD
 from ...models.event import EventEnvelope, EventStatus
+from ..capabilities import as_knowledge
 from .base import IQEAgent, require_str
 
 
@@ -50,7 +51,7 @@ class ReviewerAgent(IQEAgent):
             self.config.get("confidence_threshold", DEFAULT_CONFIDENCE_THRESHOLD)
         )
 
-        kb = self.dependencies.get("knowledge_base")
+        kb = as_knowledge(self.injected("knowledge_base"))
         query = f"{event.payload.get('ticket_title', '')} {event.payload.get('log_excerpt', '')}"
         kb_entries = kb.search(query) if kb is not None and query.strip() else []
 

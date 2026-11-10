@@ -20,7 +20,7 @@ from ..config import HEALTH_CHECK_TIMEOUT_SECONDS
 from ..errors import ConfigurationError, NotFoundError, PluginUnavailableError
 from ..logging_config import get_logger
 from ..security import config_defaults, mask_config, validate_plugin_config
-from .base import PLUGIN_TYPE_LABELS, BasePlugin, is_plugin_class
+from .base import PLUGIN_TYPE_LABELS, AgentPlugin, BasePlugin, is_plugin_class
 
 logger = get_logger("iqe.plugins")
 
@@ -111,7 +111,7 @@ class PluginRegistry:
         self._runner = runner
         instance = self._instances.get("memory_orchestrator")
         if instance is not None:
-            instance.dependencies["runner"] = runner
+            instance.resolved_dependencies["runner"] = runner
 
     # --------------------------------------------------------------- helpers
 
@@ -195,10 +195,12 @@ class PluginRegistry:
         plugin_id: str,
         dependencies: dict[str, Any],
         overrides: dict[str, Any] | None = None,
-    ) -> BasePlugin:
+    ) -> AgentPlugin:
         plugin_class = self._plugin_class(plugin_id)
         if plugin_class.plugin_type != "agent":
             raise ConfigurationError(f"插件不是 Agent: {plugin_id}")
+        if not issubclass(plugin_class, AgentPlugin):
+            raise ConfigurationError(f"Agent 插件未实现 AgentPlugin 契约: {plugin_id}")
         if not self.is_enabled(plugin_id):
             raise PluginUnavailableError(f"Agent 插件已禁用: {plugin_id}")
         config = self.get_config(plugin_id)

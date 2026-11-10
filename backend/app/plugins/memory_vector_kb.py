@@ -133,7 +133,7 @@ class MemoryVectorKBPlugin(KnowledgeBasePlugin):
     ) -> dict[str, Any]:
         # 【已确认 Q6】结构化保存日志摘要、Triage 结论与分类;
         # 检索仍只使用 title/content,避免结论文本稀释相似度。
-        entry = {
+        entry: dict[str, Any] = {
             "entry_id": str(uuid4()),
             "title": title,
             "content": content,

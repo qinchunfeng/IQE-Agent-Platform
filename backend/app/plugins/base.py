@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, ClassVar
 
+from ..models.event import EventEnvelope
 from ..security import validate_plugin_config
 
 PLUGIN_TYPE_LABELS = {
@@ -33,7 +34,8 @@ class BasePlugin:
     description: ClassVar[str] = ""
     plugin_type: ClassVar[str] = ""
     config_schema: ClassVar[dict[str, dict[str, Any]]] = {}
-    # 文档 2.1:插件声明依赖的其他插件类型
+    # 文档 2.1:插件**声明**依赖的其他插件类型 → 候选 id 列表,始终是类属性(清单)。
+    # 运行时注入的实例走 resolved_dependencies,两个名字不复用。
     dependencies: ClassVar[dict[str, list[str]]] = {}
     # 【已确认 Q8】插件能力标识,用于区分“已注册”与“可承担执行委托”。
     capabilities: ClassVar[dict[str, Any]] = {}
@@ -43,7 +45,9 @@ class BasePlugin:
         self, config: dict[str, Any] | None = None, dependencies: dict[str, Any] | None = None
     ) -> None:
         self.config = validate_plugin_config(self.config_schema, config or {})
-        self.dependencies: dict[str, Any] = dependencies or {}
+        # 文档 2.1 注入表:键是角色名(llm_provider / knowledge_base / tool / runner /
+        # run_context / http_transport / prompt_source ...),值是插件实例或标量。
+        self.resolved_dependencies: dict[str, Any] = dependencies or {}
         self.state = "registered"
         self._executor: ThreadPoolExecutor | None = None
 
@@ -67,13 +71,16 @@ class BasePlugin:
 
     async def run_isolated(
         self,
-        factory: Callable[[], Awaitable[Any]],
+        factory: Callable[[], Coroutine[Any, Any, Any]],
         timeout: float | None = None,
     ) -> Any:
         """在插件专属线程中执行协程,隔离插件故障。
 
         文档 7.1:插件崩溃不影响其他插件。线程超时后 Python 无法强杀线程,
         因此超时只保证调用方及时失败【已确认 Q16】。
+
+        factory 必须是协程函数(partial(agent.run, event)),线程内用
+        asyncio.run 起一个独立事件循环,不与主循环共享状态。
         """
 
         if self._executor is None:
@@ -84,20 +91,6 @@ class BasePlugin:
         if timeout is None:
             return await future
         return await asyncio.wait_for(future, timeout=timeout)
-
-    def describe(self) -> dict[str, Any]:
-        return {
-            "plugin_id": self.plugin_id,
-            "display_name": self.display_name,
-            "description": self.description,
-            "plugin_type": self.plugin_type,
-            "plugin_type_label": PLUGIN_TYPE_LABELS.get(self.plugin_type, self.plugin_type),
-            "config_schema": self.config_schema,
-            "dependencies": self.dependencies,
-            "capabilities": self.capabilities,
-            "state": self.state,
-        }
-
 
 class InputSourcePlugin(BasePlugin):
     """输入源插件。文档只定义职责,未定义方法【已确认 Q1/Q2】。
@@ -110,18 +103,22 @@ class InputSourcePlugin(BasePlugin):
 
     async def collect_alerts(
         self, limit: int | None = None, lookback_minutes: int | None = None
-    ) -> list[dict[str, Any]]:
+    ) -> list[EventEnvelope]:
         return []
 
 
 class AgentPlugin(BasePlugin):
-    """Agent 插件。文档附录 A 约定 input_event_types/output_event_type/run。"""
+    """Agent 插件。文档附录 A 约定 input_event_types/output_event_type/run。
+
+    返回标准事件信封(文档 3.1),入参允许已是信封或信封字典——
+    6 个 Agent 统一经 ensure_input 归一并校验。
+    """
 
     plugin_type = "agent"
     input_event_types: ClassVar[list[str]] = []
     output_event_type: ClassVar[str] = ""
 
-    async def run(self, input_event: dict[str, Any]) -> dict[str, Any]:
+    async def run(self, input_event: EventEnvelope | dict[str, Any]) -> EventEnvelope:
         raise NotImplementedError
 
 
@@ -138,11 +135,18 @@ class ToolPlugin(BasePlugin):
 
 
 class OrchestratorPlugin(BasePlugin):
-    """文档 3.2 编排引擎接口。"""
+    """文档 3.2 编排引擎接口。
+
+    【待确认 Q27】文档 3.2 的 start_pipeline 只有 pipeline_def;内置编排器需要
+    run_id 关联 asyncio.Task 与取消语义,平台因此总传 context。这里把可选的
+    context 纳入契约,保持文档调用方式(不传也能用)兼容。
+    """
 
     plugin_type = "orchestrator"
 
-    async def start_pipeline(self, pipeline_def: dict[str, Any]) -> str:
+    async def start_pipeline(
+        self, pipeline_def: dict[str, Any], context: dict[str, Any] | None = None
+    ) -> str:
         raise NotImplementedError
 
     async def get_pipeline_status(self, run_id: str) -> dict[str, Any]:

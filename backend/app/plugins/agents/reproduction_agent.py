@@ -10,6 +10,7 @@ from typing import Any
 
 from ...errors import ToolExecutionError
 from ...models.event import EventEnvelope, EventStatus
+from ..capabilities import as_reproduce_tool
 from .base import IQEAgent
 
 
@@ -27,7 +28,7 @@ class ReproductionAgent(IQEAgent):
 
     async def run(self, input_event: EventEnvelope | dict[str, Any]) -> EventEnvelope:
         event = self.ensure_input(input_event)
-        tool = self.dependencies.get("tool")
+        tool = as_reproduce_tool(self.injected("tool"))
         if tool is None:
             raise ToolExecutionError("未注入 jarvis_mock 工具")
 

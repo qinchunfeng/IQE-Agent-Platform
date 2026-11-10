@@ -53,9 +53,7 @@ class MemoryOrchestratorPlugin(OrchestratorPlugin):
     async def start_pipeline(
         self, pipeline_def: dict[str, Any], context: dict[str, Any] | None = None
     ) -> str:
-        # `BasePlugin.dependencies` 同名两用:ClassVar 声明的是依赖插件 id 列表,
-        # 实例属性装的才是注入对象,故此处显式标注,避免被按 ClassVar 类型收窄。
-        runner: Any = self.dependencies.get("runner")
+        runner = self.resolved_dependencies.get("runner")
         if not callable(runner):
             raise PluginUnavailableError("内置编排器未注入流水线执行器")
         run_id = str((context or {}).get("run_id") or uuid4())

@@ -464,7 +464,8 @@ class AirflowInputSourcePlugin(InputSourcePlugin):
         logical_date = str(
             run.get("logical_date") or run.get("execution_date") or run.get("start_date") or ""
         )
-        conf = run.get("conf") if isinstance(run.get("conf"), dict) else {}
+        raw_conf = run.get("conf")
+        conf: dict[str, Any] = raw_conf if isinstance(raw_conf, dict) else {}
         primary = tasks[0] if tasks else {}
         task_id = str(primary.get("task_id") or "dag_run")
         try_number = int(primary.get("try_number") or 0)
