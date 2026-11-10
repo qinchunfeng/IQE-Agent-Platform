@@ -2,7 +2,7 @@
 
 > **依据文档**: [lecture-06](file:///home/amd/LAI-D/learn-harness-engineering/docs/zh/lectures/lecture-06-why-initialization-needs-its-own-phase/index.md) — "Git 提交作为检查点"  
 > **适用项目**: IQE-Agent Platform Demo  
-> **最后更新**: 2026-11-05
+> **最后更新**: 2026-11-10（新增 `harness` scope）
 
 ---
 
@@ -49,6 +49,7 @@
 | `canvas` | 画布自定义功能 |
 | `trace` | Trace 页面 / 可观测性 |
 | `security` | 安全 / 脱敏 / Token |
+| `harness` | Agent 工作环境：AGENTS.md、三层验收、静态检查、冒烟、CI、提交钩子 |
 | `test` | 测试套件 |
 | `docs` | 文档 |
 | `init` | 初始化阶段产出 |
