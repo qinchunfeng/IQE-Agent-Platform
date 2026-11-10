@@ -1,7 +1,7 @@
 # IQE-Agent Platform Demo 功能清单与任务分解
 
 > **总任务数**: 24（Task 1-22 产品功能 + Task 23-24 Harness 补齐）  
-> **已完成**: 14 (58%) — 逐条统计 `### Task` 标题的 ✅ 标记  
+> **已完成**: 15 (63%) — 逐条统计 `### Task` 标题的 ✅ 标记  
 > **验收命令**: `./scripts/verify.sh`（三层：静态 → 单元/集成 → 真实进程冒烟）+ `backend/.venv/bin/python scripts/check_docs.py`  
 > **最后更新**: 2026-11-10
 >
@@ -14,8 +14,8 @@
 
 | 指标 | 值 |
 |---|---|
-| 后端测试覆盖 | 57/57 passed |
-| 静态检查 | ruff（backend + scripts）+ mypy（41 模块，16 个模块带豁免）+ eslint + tsc |
+| 后端测试覆盖 | 61/61 passed |
+| 静态检查 | ruff（backend + scripts）+ mypy（42 模块，0 豁免）+ eslint + tsc |
 | 运行时冒烟 | `scripts/smoke_test.py`：场景 1 + 场景 2，真实进程、临时库 |
 | 前端页面数 | 8 个 |
 | 插件类型 | 8 类 (输入源 / Agent / 知识库 / 工具 / 编排 / LLM / 事件总线 / 存储) |
@@ -320,19 +320,24 @@
 
 ---
 
-### Task 24: mypy 渐进豁免收口 ⏳
+### Task 24: mypy 渐进豁免收口 ✅
 **描述**: 取消 `backend/mypy.ini` 里 16 个模块的豁免，让类型层覆盖全树（见 PROGRESS.md 已知问题 I4）  
 **根因**: `BasePlugin.dependencies` 同名两用（ClassVar 声明依赖插件 id vs 实例属性装注入对象），且插件能力是 duck-typing：
 `build_alert` 只在 `mock_jenkins`、`create_ticket` 只在 `jira_mock`、`list_entries/add/search` 只在 `memory_vector_kb`；
 `AgentPlugin.run` 基类返回 `dict`，六个 Agent 实际返回 `EventEnvelope`。  
 **验收标准**:
-- [ ] 用能力 Protocol 或类型化访问器替代 `registry.get(...) -> BasePlugin` 后的 attr-defined（内核仍不得 import 具体插件类）
-- [ ] 放宽 `AgentPlugin.run` 基类返回类型，消除 8 处 override
-- [ ] 删除或修正无人调用的 `BasePlugin.describe()`（它把实例依赖字典当 API 字段返回，一旦被用会序列化插件对象）
-- [ ] `backend/mypy.ini` 的 `disable_error_code` 段落清空，`mypy app` 全绿
-- [ ] 过程中新增的 union-attr / arg-type / index / assignment 逐条按真实修因而非加豁免  
+- [x] 新增 `backend/app/plugins/capabilities.py`：9 个 `runtime_checkable` 能力协议 + `as_*` 窄化访问器；内核仍只经 `registry.get() -> BasePlugin` 取插件，再在取用点窄化，不 import 具体插件类（`backend/tests/test_plugin_contracts.py` 用正则守住这条）
+- [x] 放宽基类签名消除 8 处 override：`AgentPlugin.run(input_event: EventEnvelope | dict) -> EventEnvelope`、`InputSourcePlugin.collect_alerts(...) -> list[EventEnvelope]`、`OrchestratorPlugin.start_pipeline(pipeline_def, context=None) -> str`
+- [x] 删除无人调用的 `BasePlugin.describe()`（它把实例依赖字典当 API 字段返回，一旦被用会序列化插件对象）
+- [x] `dependencies`（ClassVar 依赖清单）与 `resolved_dependencies`（运行期注入表）拆分，消除 assignment/misc 与 `runner: Any` 那类就地绕过
+- [x] `backend/mypy.ini` 的 `disable_error_code` 段落清空，`mypy app` 全绿（42 文件 0 错误 0 豁免）
+- [x] 过程中新增的 union-attr / arg-type / index / var-annotated / type-abstract 逐条按真实修因解决，未加任何新豁免
+**关键取舍**: mypy 不允许把 Protocol 类对象传给 `type[T]`（`type-abstract`），所以能力访问器写成 `as_knowledge(x) -> KnowledgeCapability | None` 这类显式窄化函数，而不是泛型 `get_capability(id, type[T])`；两者运行期都是 `isinstance`，但只有前者静态可用。  
+**顺带修掉的真实缺陷**: `memory_vector_kb.add()` 的 `entry` 字面量被推断成 `dict[str, str | None]`（索引 `entry_id` 报错）；`airflow_input` 的 `conf` 三元表达式残留 `None` 分支；`feishu_notifier` 对 `code` 直接 `int()`（靠 TypeError 兜底）；`run_isolated(factory)` 声明成 `Awaitable` 但内部用 `asyncio.run`（只接受 Coroutine）；`IQEAgent.call_llm` 里 `isinstance(result, dict)` 在协议返回类型下已不可达。  
+**新增待确认**: Q27（`start_pipeline` 的 `context` 参数是文档 3.2 未定义的扩展）  
 **依赖**: Task 23  
-**当前进度**: 0% — 未开始
+**当前进度**: 100% — `./scripts/verify.sh` 三层全绿，测试由 57 增至 61  
+**关联 commit**: `2b4d7c3`
 
 ---
 

@@ -286,7 +286,7 @@ Ref: lecture-06 section '初始化的正确做法' item 5"
 - [ ] 提交消息符合 `<type>(<scope>): <subject>` 格式
 - [ ] body 说明了"做了什么"和"为什么"
 - [ ] Ref: 指向 FEATURES.md 或 PROGRESS.md 的具体章节
-- [ ] `./scripts/verify.sh` 通过 (57 tests + build)
+- [ ] `./scripts/verify.sh` 通过 (61 tests + build)
 - [ ] PROGRESS.md 已更新 (如进度有变化)
 - [ ] FEATURES.md 已更新 (如 Task 完成)
 - [ ] 没有包含敏感信息 (密钥 / 密码 / Token)

@@ -28,7 +28,7 @@ IQE-Agent Platform Demo 的入口文件。**只做目录，不做百科全书**�
 `./scripts/verify.sh` 三层逐层 gating，任一层失败即未完成（第 N 层不过就不跑第 N+1 层）：
 
 1. **静态**：`ruff`（覆盖 `backend/` + `scripts/`）+ 后端 `mypy` + 前端 `eslint` + `tsc -b`
-2. **单元/集成**：后端 `pytest`（57 项）+ 前端 `vite build`
+2. **单元/集成**：后端 `pytest`（61 项）+ 前端 `vite build`
 3. **运行时**：`scripts/smoke_test.py` 起真实后端进程跑场景 1（自动完成）与场景 2（人工卡点 → 批准）
 
 文档另跑 `backend/.venv/bin/python scripts/check_docs.py`（链接可解析、状态文件已入库、进度未落后于代码）。
@@ -66,6 +66,7 @@ IQE-Agent Platform Demo 的入口文件。**只做目录，不做百科全书**�
 13. 文档未定义的参数 / 契约一律先在 `docs/待确认问题清单.md` 登记 Q 编号并给出推荐方案，再落代码。
 14. `backend/requirements.txt` 用等号锁版本；前端保留 `package-lock.json`。
 15. 会话结束必须留干净状态：验证通过、进度已记录、无临时文件与未记录半成品。
+16. `backend/mypy.ini` 只保留全局段：新增 per-module `disable_error_code` 会被 `test_plugin_contracts.py` 拦下。插件能力一律经 `app/plugins/capabilities.py` 的 `as_*` 窄化取用，内核不得 import 具体插件类。
 
 ## 文档索引（按需展开）
 

@@ -14,7 +14,7 @@
 | # | 条件 | 状态 | 验证方式 |
 |---|---|---|---|
 | 1 | **能启动** | ✅ 通过 | `./scripts/run_backend.sh` + `./scripts/run_frontend.sh` |
-| 2 | **能测试** | ✅ 通过 | `./scripts/verify.sh` — 三层 gating：静态 (ruff/mypy/eslint/tsc) → 测试 (57 pytest + vite build) → 真实进程冒烟 |
+| 2 | **能测试** | ✅ 通过 | `./scripts/verify.sh` — 三层 gating：静态 (ruff/mypy/eslint/tsc) → 测试 (61 pytest + vite build) → 真实进程冒烟 |
 | 3 | **能看进度** | ✅ 通过 | `AGENTS.md` + `PROGRESS.md` + `FEATURES.md` 存在且内容完整，并由 `scripts/check_docs.py` 校验一致性 |
 | 4 | **能接手下一步** | ✅ 通过 | 新会话只看本仓库即可回答"怎么跑""怎么测""做到哪了"，入口是 `AGENTS.md` |
 
@@ -61,7 +61,7 @@ backend/.venv/bin/ruff check backend scripts
 (cd frontend && npm run lint && npm run typecheck)
 
 # 层 2 单独跑
-cd backend && .venv/bin/pytest -q          # 57 项
+cd backend && .venv/bin/pytest -q          # 61 项
 cd frontend && npm run build               # tsc -b + vite build
 
 # 层 3 单独跑（起真实 uvicorn + 临时库，不污染 backend/data/iqe_demo.db）
@@ -121,12 +121,12 @@ $ ./scripts/verify.sh
 ==> 层 1/3 静态检查 :: ruff (backend + scripts)
 All checks passed!
 ==> 层 1/3 静态检查 :: backend mypy
-Success: no issues found in 41 source files
+Success: no issues found in 42 source files
 ==> 层 1/3 静态检查 :: frontend eslint
 0 errors, 1 warning
 ==> 层 1/3 静态检查 :: frontend tsc
 ==> 层 2/3 单元与集成 :: backend pytest
-57 passed, 1 warning in 1.53s
+61 passed, 1 warning in 1.56s
 ==> 层 2/3 前端构建 :: tsc + vite build
 ✓ 794 modules transformed.
 ✓ built in 1.95s
@@ -139,14 +139,17 @@ VERIFY OK  三层全部通过，用时 9s
 
 | 测试套件 | 通过 | 失败 | 备注 |
 |---|---|---|---|
-| `test_api_flow.py` | 12 | 0 | ✅ API 端到端流程 |
-| `test_agents.py` | 18 | 0 | ✅ 6 个 Agent 单元测试 |
-| `test_input_sources.py` | 8 | 0 | ✅ Airflow / Mock Jenkins / 文件输入源 |
-| `test_event_schema.py` | 6 | 0 | ✅ 事件信封 Pydantic 校验 |
-| `test_security.py` | 5 | 0 | ✅ 密钥脱敏 + Bearer Token |
-| `test_feishu_notifier.py` | 4 | 0 | ✅ 飞书通知幂等 + 失败隔离 |
-| `test_runtime.py` | 4 | 0 | ✅ 插件隔离 + 超时控制 |
-| **合计** | **57** | **0** | ✅ **全部通过** |
+| `test_agents.py` | 16 | 0 | ✅ 6 个 Agent 单元测试 |
+| `test_api_flow.py` | 8 | 0 | ✅ API 端到端流程 |
+| `test_input_sources.py` | 7 | 0 | ✅ Airflow / Mock Jenkins / 文件输入源 |
+| `test_event_schema.py` | 8 | 0 | ✅ 事件信封 Pydantic 校验 |
+| `test_security.py` | 6 | 0 | ✅ 密钥脱敏 + Bearer Token |
+| `test_feishu_notifier.py` | 10 | 0 | ✅ 飞书通知幂等 + 失败隔离 |
+| `test_runtime.py` | 2 | 0 | ✅ 插件隔离 + 超时控制 |
+| `test_plugin_contracts.py` | 4 | 0 | ✅ 能力契约 + 无豁免/内核不依赖具体插件 |
+| **合计** | **61** | **0** | ✅ **全部通过** |
+
+> 2026-11-10 修正：本表原按文件写的是"12/18/8/6/5/4/4"，与 `pytest --collect-only` 实测分布不符（总数 57 恰好对得上，单项是失真值）。计数一律以 `pytest -q --collect-only` 为准。
 
 ### 2.3 服务状态
 
@@ -199,6 +202,7 @@ AI_Agent_Pipeline/
 │   │   │   │   ├── reporting_agent.py
 │   │   │   │   └── prompts.py          # 默认 System Prompt
 │   │   │   ├── base.py             # 插件基类
+│   │   │   ├── capabilities.py     # 能力 Protocol + as_* 窄化（内核唯一的插件契约入口）
 │   │   │   └── registry.py         # 插件注册中心
 │   │   ├── services/               # 编排、通知、降级、审批、知识库
 │   │   ├── config.py               # 配置管理
@@ -207,9 +211,9 @@ AI_Agent_Pipeline/
 │   │   ├── security.py             # 安全 / 脱敏
 │   │   ├── errors.py               # 错误处理
 │   │   └── logging_config.py       # 日志配置
-│   ├── tests/                      # 57 项自动化测试
+│   ├── tests/                      # 61 项自动化测试
 │   ├── data/                       # SQLite 数据库文件 (运行时生成)
-│   ├── mypy.ini                    # 层 1 类型检查（渐进豁免清单）
+│   ├── mypy.ini                    # 层 1 类型检查（仅全局段，无 per-module 豁免）
 │   ├── requirements.txt            # Python 运行时依赖
 │   ├── requirements-dev.txt        # ruff / mypy / pre-commit
 │   └── .venv/                      # Python 虚拟环境
@@ -270,8 +274,8 @@ AI_Agent_Pipeline/
 | 阶段二：生产化扩展 | 6 | 6 | ✅ 100% |
 | 阶段三：演示场景验证 | 5 | 0 | 🔄 Task 13 75% / Task 14 90% / Task 15 90% |
 | 阶段四：收尾与交付 | 5 | 1 | 🔄 仅 Task 22 完成 |
-| 阶段五：Harness 补齐 | 2 | 1 | 🔄 Task 23 ✅ / Task 24 待开始 |
-| **合计** | **24** | **14** | **58%** |
+| 阶段五：Harness 补齐 | 2 | 2 | ✅ Task 23 ✅ / Task 24 ✅ |
+| **合计** | **24** | **15** | **63%** |
 
 > 2026-11-10 修正：原表写"28 个任务 / 22 已完成 / 79%"，与实际条目不符（阶段四从未有 5 项完成，Task 23-24 也未计入）。计数以 FEATURES.md 的 `### Task` 条目为准。
 
@@ -283,17 +287,18 @@ AI_Agent_Pipeline/
    - 下一步: 让同一对案例走真实 Qoder CN LLM，并在 Trace 里标出数值来源
    - 原"query 构造不一致"卡点经复核不成立，已撤销
 
-2. **[P1] Task 24: mypy 渐进豁免收口**
-   - 当前进度: 0%
-   - 根因: 插件能力 duck-typing 未声明在基类 + `AgentPlugin.run` 基类返回类型过窄
-   - 下一步: 引入能力 Protocol，再逐模块删 `backend/mypy.ini` 的 `disable_error_code`
-   - 验收标准: 16 个豁免段落清空且 `mypy app` 全绿
-
-3. **[P2] Task 19: 实验面板 TAT 来源标注优化**
+2. **[P1] Task 19: 实验面板 TAT 来源标注优化**
    - 当前进度: 0%
    - 问题: 管理层可能混淆"文档基线"与"实测值"
    - 下一步: 在对比图表中明确区分三种来源
    - 验收标准: 鼠标悬停显示数据来源说明
+
+3. **[P2] 冒烟第三层扩到场景 3-5（PROGRESS.md I5）**
+   - 当前进度: 第 3 层只自证场景 1/2
+   - 下一步: 把知识库加速、Airflow 输入、报表统计纳入 `scripts/smoke_test.py`
+   - 验收标准: `verify.sh` 第三层能覆盖文档第 6 节全部 5 个场景
+
+> 已收口：Task 24（mypy 16 模块豁免 → 0）于 2026-11-10 完成，能力契约落在 `backend/app/plugins/capabilities.py`，防复发检查落在 `backend/tests/test_plugin_contracts.py`。
 
 ---
 
@@ -394,7 +399,7 @@ Ref: PROGRESS.md, FEATURES.md"
 A: 执行 `./scripts/run_backend.sh` 和 `./scripts/run_frontend.sh`，然后访问 http://127.0.0.1:3200
 
 **Q: 怎么测试？**  
-A: 执行 `./scripts/verify.sh`，逐层看到 `All checks passed!` → `57 passed` → `SMOKE OK`，最后是 `VERIFY OK 三层全部通过`；层 1 失败不会跑层 2/3
+A: 执行 `./scripts/verify.sh`，逐层看到 `All checks passed!` → `61 passed` → `SMOKE OK`，最后是 `VERIFY OK 三层全部通过`；层 1 失败不会跑层 2/3
 
 **Q: 做到哪了？**  
 A: 读 `PROGRESS.md` 的"当前快照"和"进行中"部分
@@ -422,7 +427,7 @@ A: `uv pip install -p backend/.venv/bin/python -r backend/requirements-dev.txt`�
 
 - [x] `./scripts/run_backend.sh` 从零开始能成功
 - [x] `./scripts/run_frontend.sh` 从零开始能成功
-- [x] `./scripts/verify.sh` 至少有一个测试通过 (实际: 三层全绿，57/57 + 冒烟)
+- [x] `./scripts/verify.sh` 至少有一个测试通过 (实际: 三层全绿，61/61 + 冒烟)
 - [x] 新的 agent 会话能只看仓库回答"怎么跑"和"怎么测"（入口 `AGENTS.md`）
 - [x] 任务分解文件存在且有至少 3 个任务 (实际: 24 个)
 - [x] 所有内容已提交到 git（2026-11-10 完成：状态文档 + Harness 配置全部入库，`git status` 干净）
@@ -432,7 +437,7 @@ A: `uv pip install -p backend/.venv/bin/python -r backend/requirements-dev.txt`�
 ## 启动就绪四条件验收
 
 - [x] 能启动: 后端 :8000 + 前端 :3200 可一键启动
-- [x] 能测试: 静态 4 项 + 57 项测试 + 前端构建 + 真实进程冒烟，逐层 gating
+- [x] 能测试: 静态 4 项 + 61 项测试 + 前端构建 + 真实进程冒烟，逐层 gating
 - [x] 能看进度: AGENTS.md + PROGRESS.md + FEATURES.md 内容完整且经 `check_docs.py` 校验
 - [x] 能接手下一步: 新会话按 `AGENTS.md` 会话开始例程或本文"六、新会话接手指南"操作即可
 

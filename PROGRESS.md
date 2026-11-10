@@ -1,7 +1,7 @@
 # IQE-Agent Platform Demo 进度日志
 
-> **最后更新**: 2026-11-10 (Harness P0 补齐)  
-> **当前会话目标**: 把 harness 审计里的 P0 四项落成可执行门禁；功能侧场景 3 仍是下一个 P0
+> **最后更新**: 2026-11-10 (mypy 豁免收口，Task 24)  
+> **当前会话目标**: 收口 mypy 16 模块豁免（Task 24，✅ 已完成并三层验证）；下一个 P0 仍是产品侧场景 3
 
 ---
 
@@ -9,17 +9,17 @@
 
 | 指标 | 状态 |
 |---|---|
-| **Harness 补齐提交** | `0a677fc` AGENTS.md 入口 → `bef9e91` 静态工具链 → `8705a70` 状态文档 → `44aa943` 三层门禁 → `4693d92` 哈希与提交顺序 |
+| **Harness 补齐提交** | `0a677fc` AGENTS.md 入口 → `bef9e91` 静态工具链 → `8705a70` 状态文档 → `44aa943` 三层门禁 → `4693d92` 哈希与提交顺序 → `4693d92` 哈希与提交顺序 → `2b4d7c3` mypy 豁免收口 |
 | **最新 commit** | 以 `git log -1 --oneline` 为准：本字段若写死具体哈希，每次提交即自我过期，故不记录 |
 | **验收命令** | ✅ `./scripts/verify.sh` 三层全绿 (ruff/mypy/eslint/tsc → pytest/build → 真实进程冒烟)，用时 ~9s |
-| **后端测试** | ✅ 57/57 passed (1.52s) |
+| **后端测试** | ✅ 61/61 passed |
 | **前端构建** | ✅ tsc + vite build 通过 |
 | **服务状态** | 后端 :8000 / 前端 :3200 可启动 |
 | **Airflow 集成** | ✅ 真实轮询已验证 (v3.3.1, 端口 18080) |
 | **Qoder CN LLM** | ✅ 真实代理已接入 (DeepSeek-Flash via :3000) |
 | **飞书通知** | ✅ Webhook + 应用双模式已实现 |
 | **入口文档** | ✅ `AGENTS.md`（≤100 行路由器）已建立，v1 需求文档移入 `docs/archive/` |
-| **静态检查债务** | ⚠️ mypy 16 个模块渐进豁免（49 错误清零前不算"类型干净"），见 I4 |
+| **静态检查债务** | ✅ mypy 0 豁免（42 文件全绿）；能力契约见 `backend/app/plugins/capabilities.py`，防复发检查见 `backend/tests/test_plugin_contracts.py` |
 
 ---
 
@@ -50,6 +50,14 @@
 - [x] **文档一致性检查** — `scripts/check_docs.py` 查链接可达、状态文档已入库、根目录无多版本文档、进度文档未落后于代码
 - [x] **CI + pre-commit** — `.github/workflows/check.yml` 跑 verify.sh；`.pre-commit-config.yaml` 只写 `.git/hooks/pre-commit`，不影响 Qoder tracker 的其它钩子
 
+### mypy 豁免收口 (2026-11-10，FEATURES Task 24)
+- [x] **能力协议层** — 新增 `backend/app/plugins/capabilities.py`：`LLMProvider / Orchestrator / AlertSource / AlertBuilder / Ticket / Reproduce / Knowledge / Notifier / EventBus` 9 个 `runtime_checkable` Protocol + 同名 `as_*` 窄化访问器（mypy 不接受把 Protocol 传给 `type[T]`，故不用泛型访问器）
+- [x] **基类契约对齐实现** — `AgentPlugin.run` 返回 `EventEnvelope`、`collect_alerts` 返回 `list[EventEnvelope]`、`start_pipeline(pipeline_def, context=None)`；8 处 override 错误清零，编排器 `context` 参数登记为 Q27
+- [x] **`dependencies` 拆分** — ClassVar 依赖清单 vs 实例注入表 `resolved_dependencies`，`memory_orchestrator` 里 `runner: Any` 的就地绕过与 `describe()` 死代码一并删除
+- [x] **16 个模块豁免清空** — `backend/mypy.ini` 只剩全局段；`mypy app` 42 文件 0 错误（`warn_unreachable` 开着，绿灯不是靠降级换来的）
+- [x] **4 处真实缺陷顺带修掉** — kb `entry` 字面量类型、airflow `conf` 的 `None` 分支、feishu `code` 的 `int()` 兜底、`run_isolated` 的 `Awaitable`→`Coroutine`
+- [x] **防复发测试** — `backend/tests/test_plugin_contracts.py`：mypy.ini 不得再出现 `disable_error_code`、内核不得 import 具体插件模块、能力窄化函数接受真插件/拒绝无能力对象（测试 57 → 61）
+
 ---
 
 ## 进行中 🔄
@@ -72,7 +80,7 @@
 | I1 | 场景 3 只在 Mock LLM 下验证，真实 Qoder CN 路径未跑 | 演示时"置信度提升"依赖 Mock 公式，真实模型下数值不可预测 | P0 |
 | I2 | **已撤销**：`test_pagination_edge_case` 空结果集返回 500 | 全仓搜不到该测试，`pytest -q` 57/57 全绿 | — |
 | I3 | 实验面板的 TAT 来源标注不清晰 | 管理层可能混淆"文档基线"与"实测值" | P1 |
-| I4 | mypy 仍有 16 个模块 / 49 处错误的渐进豁免；根因是插件能力靠鸭子类型取值（未声明在基类），另发现 `BasePlugin.dependencies` 声明与实际使用同名两用，导致 `memory_orchestrator.describe()` 被 mypy 判为不可达且该方法是死代码 | `mypy` 绿灯不等于类型安全；债务按 FEATURES Task 24 逐项收口 | P1 |
+| I4 | **已收口**：mypy 16 模块 / 49 处豁免错误 → 0（FEATURES Task 24，能力 Protocol + 基类签名 + `dependencies` 拆分） | 类型绿灯现在有 `test_plugin_contracts.py` 兜住，重新加豁免会直接挂测试 | — |
 | I5 | `verify.sh` 第三层冒烟只覆盖场景 1/2 | 场景 3-5 回归仍靠手工点验，agent 无法自查 | P2 |
 
 > 编号保持稳定不复用：I2 已撤销但保留空位，因为 FEATURES.md 按编号引用 I3/I4。
@@ -86,10 +94,9 @@
 ## 下一步 📋
 
 1. **[P0]** 让场景 3 走真实 Qoder CN LLM（对应 I1）：保留 Mock 降级，把 `kb_hit → 置信度/耗时` 的取值来源在 Trace 里标成 `model_source`，演示时能说清哪部分是实测
-2. **[P1]** 按 FEATURES Task 24 收口 mypy 渐进豁免（对应 I4）：先给插件能力补 Protocol/声明，再逐模块删 `disable_error_code`，同时清理 `describe()` 死代码
-3. **[P1]** 实验面板对比图表标注"文档基线 / 模拟指标 / 实测值"三种来源（对应 I3、FEATURES Task 19）
-4. **[P2]** 把冒烟第三层扩到场景 3-5（对应 I5），使 `verify.sh` 能自证 5 个演示场景
-5. **[P2]** Harness P1 项：`feature_list.json` + validator + pass-gate、`docs/` 标准目录与 `DECISIONS.md`、可执行架构规则检查
+2. **[P1]** 实验面板对比图表标注"文档基线 / 模拟指标 / 实测值"三种来源（对应 I3、FEATURES Task 19）
+3. **[P2]** 把冒烟第三层扩到场景 3-5（对应 I5），使 `verify.sh` 能自证 5 个演示场景
+4. **[P2]** Harness P1 项：`feature_list.json` + validator + pass-gate、`docs/` 标准目录与 `DECISIONS.md`、可执行架构规则检查
 
 > 原「清理 `backend/app/plugins/` 下 `__pycache__` 与 `.pyc`」不成立：`.gitignore` 已忽略且 `git ls-files` 中跟踪数为 0，仓库侧无需处理。
 
@@ -97,7 +104,20 @@
 
 ## 验证记录 🧪
 
-### 三层验收 `./scripts/verify.sh` (2026-11-10，用时 9s)
+### 三层验收 `./scripts/verify.sh` (2026-11-10，mypy 豁免清空后，用时 9s)
+```
+层 1 静态    ruff check backend scripts  → All checks passed!
+             mypy app (42 modules)       → Success: no issues（0 个 disable_error_code 段落）
+             eslint .                    → 0 errors, 1 warning
+             tsc -b                      → 通过
+层 2 测试    pytest -q                   → 61 passed, 1 warning in 1.56s
+             vite build                  → 794 modules，8 个页面构建成功
+层 3 冒烟    smoke_test.py               → SMOKE OK 场景 1/2、0 失败 Run、0 死信、Demo 库未触碰
+VERIFY OK  三层全部通过
+```
+这一层的绿灯不是靠豁免换来的：`backend/mypy.ini` 现在只剩全局段，`warn_unreachable = True` 仍开着；`test_plugin_contracts.py` 会在有人重新写入 `disable_error_code` 或让内核 import 具体插件模块时失败。新增 4 项测试使后端用例从 57 增至 61。
+
+### 三层验收 `./scripts/verify.sh` (2026-11-10，Harness P0 四项落地时，用时 9s)
 ```
 层 1 静态    ruff check backend scripts  → All checks passed!
              mypy app (41 modules)       → no issues
