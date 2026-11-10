@@ -1,0 +1,42 @@
+name: check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 安装依赖
+        run: |
+          uv venv --python 3.12 backend/.venv
+          uv pip install -p backend/.venv/bin/python \
+            -r backend/requirements.txt -r backend/requirements-dev.txt
+          npm ci --prefix frontend --no-audit --no-fund
+
+      # 与 AGENTS.md「怎么算完成」和 GIT_COMMIT_CONVENTION.md「提交前审查清单」同一条命令。
+      - name: 三层终止检查
+        run: ./scripts/verify.sh
+
+      - name: 文档健康检查
+        run: backend/.venv/bin/python scripts/check_docs.py

@@ -1,0 +1,21 @@
+# 本地提交门，跑的是与 CI 完全相同的两条命令（AGENTS.md「收工前必须」）。
+# 安装：uv pip install -r backend/requirements-dev.txt && backend/.venv/bin/pre-commit install
+# 卸载：backend/.venv/bin/pre-commit uninstall
+# 只写 .git/hooks/pre-commit，不动仓库里已有的 Qoder AI tracker hooks。
+repos:
+  - repo: local
+    hooks:
+      - id: verify
+        name: 三层终止检查 (scripts/verify.sh)
+        entry: ./scripts/verify.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        require_serial: true
+
+      - id: check-docs
+        name: 文档健康检查 (scripts/check_docs.py)
+        entry: backend/.venv/bin/python scripts/check_docs.py
+        language: system
+        pass_filenames: false
+        always_run: true
