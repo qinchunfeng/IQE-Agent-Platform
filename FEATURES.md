@@ -315,7 +315,7 @@
 - [x] 第 3 层 `scripts/smoke_test.py` 起真实进程跑通场景 1 + 场景 2，并断言 0 失败 Run / 0 死信 / Demo 库未被改动
 - [x] `.github/workflows/check.yml` 与 `scripts/check_docs.py` 存在，pre-commit 已安装且未覆盖 Qoder hooks
 **依赖**: Task 1-22  
-**关联 commit**: `0a677fc`（AGENTS.md + v1 归档）、`bef9e91`（静态工具链 + 代码修复）、其后的 `feat(harness)`（三层门禁）与本 `docs(progress)` 提交  
+**关联 commit**: `0a677fc`（AGENTS.md + v1 归档）、`bef9e91`（静态工具链 + 代码修复）、`8705a70`（状态文档）、`44aa943`（三层门禁 + 冒烟 + 文档检查 + CI/pre-commit）  
 **维护约定**: 头部"总任务数 / 已完成"必须跟着 `### Task` 条目与实际勾选重算。`check_docs.py` 只校验链接/入库/新鲜度，不校验计数，所以这项靠收工例程人工核对——本次已重算为 24 / 14
 
 ---

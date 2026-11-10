@@ -46,7 +46,8 @@ IQE-Agent Platform Demo 的入口文件。**只做目录，不做百科全书**�
 1. 更新 `PROGRESS.md`（快照 / 进行中 / 已知问题 / 下一步 / 验证记录）
 2. 勾选 `FEATURES.md` 中已通过验证的任务
 3. `./scripts/verify.sh` 通过 + `./scripts/check_docs.py` 通过
-4. 按 `GIT_COMMIT_CONVENTION.md` 提交；一个 commit 只做一件事
+4. 按 `GIT_COMMIT_CONVENTION.md` 提交；一个 commit 只做一件事。改了 `backend/app` 或
+   `frontend/src` 的那次提交必须**紧跟一次状态文档提交**，否则 `check_docs.py` 会判定进度落后并拦下后续提交
 
 ## 硬约束（不可违反）
 
