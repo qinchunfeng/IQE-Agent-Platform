@@ -1,9 +1,12 @@
 # IQE-Agent Platform Demo 功能清单与任务分解
 
-> **总任务数**: 28  
-> **已完成**: 22 (79%)  
-> **验收命令**: `./scripts/verify.sh` (57 tests + tsc/vite build)  
-> **最后更新**: 2026-11-05
+> **总任务数**: 24（Task 1-22 产品功能 + Task 23-24 Harness 补齐）  
+> **已完成**: 14 (58%) — 逐条统计 `### Task` 标题的 ✅ 标记  
+> **验收命令**: `./scripts/verify.sh`（三层：静态 → 单元/集成 → 真实进程冒烟）+ `backend/.venv/bin/python scripts/check_docs.py`  
+> **最后更新**: 2026-11-10
+>
+> 修正记录：原头部写「总任务数 28 / 已完成 22 (79%)」，与正文实际条目（22 个 Task、13 个 ✅）不符，
+> 属第 8-9 讲描述的手改状态失真；头部数字现按正文重算。
 
 ---
 
@@ -12,10 +15,12 @@
 | 指标 | 值 |
 |---|---|
 | 后端测试覆盖 | 57/57 passed |
+| 静态检查 | ruff（backend + scripts）+ mypy（41 模块，16 个模块带豁免）+ eslint + tsc |
+| 运行时冒烟 | `scripts/smoke_test.py`：场景 1 + 场景 2，真实进程、临时库 |
 | 前端页面数 | 8 个 |
 | 插件类型 | 8 类 (输入源 / Agent / 知识库 / 工具 / 编排 / LLM / 事件总线 / 存储) |
 | 演示场景 | 5 个 |
-| Git commits | 2 个主要提交 |
+| Git commits | 见 `git log --oneline`（init checkpoint 之后新增 harness 补齐提交） |
 
 ---
 
@@ -181,28 +186,28 @@
 
 ## 阶段三：演示场景验证 (进行中 🔄)
 
-### Task 13: 场景 1 端到端自动化验证 ⏳
+### Task 13: 场景 1 端到端自动化验证 🔄
 **描述**: 验证数据源 → 场景 1 的完整流程  
 **验收标准**:
-- [ ] 6 个 Agent 自动流转，无人工干预
-- [ ] 创建 Mock Jira 工单
-- [ ] TAT 约 8 分钟 (模拟值，标注"文档基线")
-- [ ] Trace 页面可查看完整事件链路  
+- [x] 6 个 Agent 自动流转，无人工干预 — `scripts/smoke_test.py` 层 3 断言完整事件序列
+- [x] 创建 Mock Jira 工单 — 冒烟断言工单 key 前缀 `IQE-`
+- [ ] TAT 约 8 分钟 (模拟值，标注"文档基线") — 属面板展示，需人工点验
+- [ ] Trace 页面可查看完整事件链路 — 属 UI，需浏览器点验  
 **依赖**: Task 1-12  
-**当前进度**: 0% — 未开始  
+**当前进度**: 75% — 真实进程 + API 层已由 `test_scene_1_end_to_end_and_envelope` 与层 3 冒烟覆盖，剩两项是界面展示  
 **卡点**: 无
 
 ---
 
-### Task 14: 场景 2 人工卡点验证 ⏳
+### Task 14: 场景 2 人工卡点验证 🔄
 **描述**: 验证低置信度时的人工审批流程  
 **验收标准**:
-- [ ] 构造置信度 0.6 < 0.7 的案例
-- [ ] Reviewer 暂停，状态变为 `waiting_human`
-- [ ] 可驳回或批准，驳回时记录原因
-- [ ] 飞书通知 (如配置) 发送审批请求  
+- [x] 构造置信度 0.6 < 0.7 的案例 — `IQE-CASE-019`
+- [x] Reviewer 暂停，状态变为 `waiting_human`
+- [x] 可驳回或批准，驳回时记录原因 — 驳回路径断言 `ticket is None`；批准路径由层 3 冒烟断言 `reviewed_by=human`
+- [ ] 飞书通知 (如配置) 发送审批请求 — 需真实凭据，未配置时按 Task 11 的幂等/失败隔离测试覆盖  
 **依赖**: Task 11, Task 13  
-**当前进度**: 0% — 未开始
+**当前进度**: 90% — 卡点与两条决策路径均有自动化验证，剩真实飞书投递需人工配置
 
 ---
 
@@ -211,11 +216,12 @@
 **验收标准**:
 - [x] 知识库入库接口 — Reviewer 阶段自动保存案例摘要 + Triage 结论
 - [x] 知识库检索接口 — 词频余弦相似度，TopK=3，阈值=0.35
-- [ ] **案例 A**: Triage 置信度 0.75，未命中知识库
-- [ ] **案例 B**: Triage 置信度 0.92，命中案例 A 的知识，耗时 30s (vs 3min)  
+- [x] **案例 A**: Triage 置信度 0.75，未命中知识库
+- [x] **案例 B**: Triage 置信度 0.92，命中案例 A 的知识，耗时 30s (vs 3min)
+- [ ] 真实 Qoder CN LLM 路径下的同等结论（当前数值由 Mock LLM 按检索命中驱动）  
 **依赖**: Task 4, Task 13  
-**当前进度**: 70% — 入库/检索接口完成，端到端验证未通过  
-**卡点**: 案例 B 检索时 query 构造与入库时不一致，导致未命中
+**当前进度**: 90% — `test_scene_3_knowledge_boost` 端到端通过（`IQE-CASE-017` → 入库 → `IQE-CASE-018`：0.75/180000ms → 0.92/30000ms，`kb_hit=true`）  
+**卡点**: 原记"案例 B query 构造不一致导致未命中"经复核不成立，已撤销；剩余缺口是真实 LLM 路径（见 PROGRESS.md I1）
 
 ---
 
@@ -292,7 +298,41 @@
 - [x] `./scripts/verify.sh` 通过 (57 tests + build)
 - [x] Git commit: `chore: add PROGRESS.md and FEATURES.md as init checkpoint`  
 **依赖**: Task 1-21  
-**关联 commit**: 待提交
+**关联 commit**: `1a6c0ce`（原标"待提交"，四个状态文件已于 2026-11-10 入库）
+
+---
+
+## 阶段五：Harness 补齐 (进行中 🔄)
+
+### Task 23: Harness P0 四项落地 ✅
+**描述**: 按 harness 审计结论补齐指令层与反馈层缺口：状态文件入库、AGENTS.md 入口、三层终止检查、CI 与 pre-commit  
+**验收标准**:
+- [x] 四个状态文件（PROGRESS / FEATURES / GIT_COMMIT_CONVENTION / STARTUP_READINESS）已 git 跟踪
+- [x] `AGENTS.md` 存在且 ≤100 行，含首次运行 / ≤15 条硬约束 / 文档索引 / 会话上下班例程
+- [x] v1 需求文档移入 `docs/archive/`，根目录不再有两份矛盾基线
+- [x] `./scripts/verify.sh` 三层逐层 gating，第 1 层失败即不跑第 2、3 层（已用故意违规探针反向验证）
+- [x] 第 1 层静态检查真实全绿：ruff（backend+scripts）、mypy、eslint、tsc
+- [x] 第 3 层 `scripts/smoke_test.py` 起真实进程跑通场景 1 + 场景 2，并断言 0 失败 Run / 0 死信 / Demo 库未被改动
+- [x] `.github/workflows/check.yml` 与 `scripts/check_docs.py` 存在，pre-commit 已安装且未覆盖 Qoder hooks
+**依赖**: Task 1-22  
+**关联 commit**: `0a677fc`（AGENTS.md + v1 归档）、`bef9e91`（静态工具链 + 代码修复）、其后的 `feat(harness)`（三层门禁）与本 `docs(progress)` 提交  
+**维护约定**: 头部"总任务数 / 已完成"必须跟着 `### Task` 条目与实际勾选重算。`check_docs.py` 只校验链接/入库/新鲜度，不校验计数，所以这项靠收工例程人工核对——本次已重算为 24 / 14
+
+---
+
+### Task 24: mypy 渐进豁免收口 ⏳
+**描述**: 取消 `backend/mypy.ini` 里 16 个模块的豁免，让类型层覆盖全树（见 PROGRESS.md 已知问题 I4）  
+**根因**: `BasePlugin.dependencies` 同名两用（ClassVar 声明依赖插件 id vs 实例属性装注入对象），且插件能力是 duck-typing：
+`build_alert` 只在 `mock_jenkins`、`create_ticket` 只在 `jira_mock`、`list_entries/add/search` 只在 `memory_vector_kb`；
+`AgentPlugin.run` 基类返回 `dict`，六个 Agent 实际返回 `EventEnvelope`。  
+**验收标准**:
+- [ ] 用能力 Protocol 或类型化访问器替代 `registry.get(...) -> BasePlugin` 后的 attr-defined（内核仍不得 import 具体插件类）
+- [ ] 放宽 `AgentPlugin.run` 基类返回类型，消除 8 处 override
+- [ ] 删除或修正无人调用的 `BasePlugin.describe()`（它把实例依赖字典当 API 字段返回，一旦被用会序列化插件对象）
+- [ ] `backend/mypy.ini` 的 `disable_error_code` 段落清空，`mypy app` 全绿
+- [ ] 过程中新增的 union-attr / arg-type / index / assignment 逐条按真实修因而非加豁免  
+**依赖**: Task 23  
+**当前进度**: 0% — 未开始
 
 ---
 
@@ -314,6 +354,8 @@ Task 1 (脚手架)
               └─→ Task 13-17 (5 场景验证)
                     └─→ Task 18-21 (收尾交付)
                           └─→ Task 22 (初始化检查点)
+                                └─→ Task 23 (Harness P0 补齐)
+                                      └─→ Task 24 (mypy 豁免收口)
 ```
 
 ---
@@ -321,14 +363,27 @@ Task 1 (脚手架)
 ## 验收命令速查
 
 ```bash
-# 一键验收
+# 三层终止检查（静态 → 单元/集成 → 真实进程冒烟）
 ./scripts/verify.sh
 
-# 单独跑后端测试
-cd backend && .venv/bin/pytest -q
+# 层 1 单独跑
+backend/.venv/bin/ruff check backend scripts
+(cd backend && .venv/bin/mypy app)
+(cd frontend && npm run lint && npm run typecheck)
 
-# 单独跑前端构建
-cd frontend && npm run build
+# 层 2 单独跑
+(cd backend && .venv/bin/pytest -q)
+(cd frontend && npm run build)
+
+# 层 3 单独跑（临时库 + 随机端口，不碰 Demo 库，可反复执行）
+backend/.venv/bin/python scripts/smoke_test.py
+
+# 文档健康检查
+backend/.venv/bin/python scripts/check_docs.py
+
+# 静态工具安装（新克隆后需要先跑一次）
+uv pip install -p backend/.venv/bin/python -r backend/requirements-dev.txt
+backend/.venv/bin/pre-commit install
 
 # 启动服务
 ./scripts/run_backend.sh  # :8000

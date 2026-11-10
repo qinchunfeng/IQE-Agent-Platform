@@ -2,6 +2,9 @@
 
 面向管理层演示的插件化 AI Agent 编排平台,严格按 `IQE-Agent-Platform-Demo开发指导文档_v2.md`(v2.5)实现。
 
+> **改代码前先读 [AGENTS.md](AGENTS.md)**：它是本仓库的入口（启动方式、硬约束、验证命令、文档索引）。
+> 需求基线只有 v2；v1 已移入 `docs/archive/`，不作为实现依据。
+
 - **万物插件**:平台内核只做编排,输入源 / Agent / 知识库 / 工具 / 编排引擎 / LLM / 事件总线 / 存储全部可插拔。
 - **端到端链路**:Monitor → Triage → Reproduction → Ticket → Reviewer → Reporting。
 - **真实集成 + Mock 降级**:Airflow 作为输入源插件实时监控失败 DAG,Qoder CN 作为 LLM 插件真实调用;不可用时自动降级到 Mock。
@@ -89,24 +92,38 @@ npm run dev
 
 ## 测试
 
-```bash
-cd backend
-.venv/bin/pytest -q          # 57 项测试
+三层终止检查,逐层 gating(第 1 层不过不跑第 2 层),详见 [AGENTS.md](AGENTS.md):
 
-cd ../frontend
-npm run build                # TypeScript + Vite 构建
+```bash
+./scripts/verify.sh          # 层1 ruff/mypy/eslint/tsc → 层2 57 tests + build → 层3 真实进程冒烟
 ```
 
-或一键验收:
+单独跑某一层:
 
 ```bash
-./scripts/verify.sh          # 57 passed + tsc/vite build
+backend/.venv/bin/ruff check backend scripts
+backend/.venv/bin/mypy app                    # 需在 backend/ 下执行
+cd frontend && npm run lint && npm run typecheck
+backend/.venv/bin/pytest -q                   # 57 项测试
+backend/.venv/bin/python scripts/smoke_test.py # 临时库起真实后端,跑场景 1 + 场景 2
+```
+
+文档与提交门:
+
+```bash
+backend/.venv/bin/python scripts/check_docs.py # 链接可解析 / 状态文件已入库 / 进度未落后于代码
+backend/.venv/bin/pre-commit install           # 装上后每次 commit 自动跑 verify.sh + check_docs.py
 ```
 
 ## 目录结构
 
 ```
 AI_Agent_Pipeline/
+├── AGENTS.md                       # agent 入口：启动、硬约束、验证命令、文档索引
+├── PROGRESS.md / FEATURES.md       # 进度与任务分解（会话开始必读）
+├── STARTUP_READINESS.md            # 启动就绪清单
+├── GIT_COMMIT_CONVENTION.md        # 提交规范与检查点策略
+├── ruff.toml                       # 第 1 层 Python 规则集（backend + scripts）
 ├── backend/
 │   ├── app/
 │   │   ├── main.py                 # FastAPI 入口与 API
@@ -117,13 +134,19 @@ AI_Agent_Pipeline/
 │   │   ├── services/               # 编排、输入源轮询、通知、降级、审批、知识库
 │   │   ├── db.py                   # SQLite 持久化
 │   │   └── seed.py                 # 文档 4.2 流水线模板
-│   └── tests/                      # 57 项自动化测试
-├── frontend/src/                   # 8 个演示页面
+│   ├── tests/                      # 57 项自动化测试
+│   ├── mypy.ini                    # 类型检查 + 渐进式豁免清单
+│   └── requirements-dev.txt        # ruff / mypy / pre-commit
+├── frontend/
+│   ├── eslint.config.js
+│   └── src/                        # 8 个演示页面
 ├── docs/
 │   ├── 产品设计说明.md
 │   ├── 操作指南.md
-│   └── 待确认问题清单.md
-└── scripts/                        # 启动 / 重置 / 验收脚本
+│   ├── 待确认问题清单.md
+│   └── archive/                    # 已废弃文档留档，不作实现依据
+├── scripts/                        # 启动 / 重置 / 三层验收 / 冒烟 / 文档检查
+└── .github/workflows/check.yml     # CI：与本地 verify.sh + check_docs.py 同一条命令
 ```
 
 ## 可选运行参数
