@@ -91,22 +91,24 @@ export function Layout() {
 
       <div className="main-area">
         <header className="topbar">
-          <div>
-            <h1>{page.title}</h1>
-            <p>{page.subtitle}</p>
-          </div>
-          <div className="topbar-right">
-            <span className={`api-pill api-${apiState}`}>
-              <span className="api-dot" />
-              {apiState === "ok" ? "API 已连接" : apiState === "down" ? "API 未连接" : "连接中"}
-            </span>
-            <span className="topbar-date">
-              {now.toLocaleDateString("zh-CN", {
-                year: "numeric",
-                month: "2-digit",
-                day: "2-digit",
-              })}
-            </span>
+          <div className="topbar-inner">
+            <div>
+              <h1>{page.title}</h1>
+              <p>{page.subtitle}</p>
+            </div>
+            <div className="topbar-right">
+              <span className={`api-pill api-${apiState}`}>
+                <span className="api-dot" />
+                {apiState === "ok" ? "API 已连接" : apiState === "down" ? "API 未连接" : "连接中"}
+              </span>
+              <span className="topbar-date">
+                {now.toLocaleDateString("zh-CN", {
+                  year: "numeric",
+                  month: "2-digit",
+                  day: "2-digit",
+                })}
+              </span>
+            </div>
           </div>
         </header>
         <main className="page">
