@@ -361,7 +361,7 @@
 **关键取舍**: 保留宽度上限而非完全流体——3000px 级视口下若让 hero 标题与表格无限拉伸，行长会失控；改为「抬高上限 + 居中 + 超宽网格重排」，空白左右均分且顶栏同步，观感是有意留白而非布局断裂。  
 **验证方式**: 临时 iframe 视口夹具（媒体查询按 iframe 宽度求值，`transform: scale` 只影响截图不改布局），逐页读取 `getBoundingClientRect` 与 `scrollWidth` 比对；夹具验证后已删除，未留在仓库  
 **依赖**: Task 1  
-**关联 commit**: 见 `git log --oneline -- frontend/src/styles.css`
+**关联 commit**: `f72d14b`（状态文档 `35e2163`）
 
 ---
 
