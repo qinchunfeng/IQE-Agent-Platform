@@ -1,7 +1,7 @@
 # IQE-Agent Platform Demo 进度日志
 
-> **最后更新**: 2026-11-10 (mypy 豁免收口，Task 24)  
-> **当前会话目标**: 收口 mypy 16 模块豁免（Task 24，✅ 已完成并三层验证）；下一个 P0 仍是产品侧场景 3
+> **最后更新**: 2026-11-11 (全视口宽度适配，Task 25)  
+> **当前会话目标**: 修复宽屏正文截断与顶栏错位、窄屏横向溢出（Task 25，✅ 已完成并三层验证）；下一个 P0 仍是产品侧场景 3
 
 ---
 
@@ -20,6 +20,7 @@
 | **飞书通知** | ✅ Webhook + 应用双模式已实现 |
 | **入口文档** | ✅ `AGENTS.md`（≤100 行路由器）已建立，v1 需求文档移入 `docs/archive/` |
 | **静态检查债务** | ✅ mypy 0 豁免（42 文件全绿）；能力契约见 `backend/app/plugins/capabilities.py`，防复发检查见 `backend/tests/test_plugin_contracts.py` |
+| **界面宽度适配** | ✅ 390–3440px 全档无横向溢出；`.page` 与 `.topbar-inner` 共用 `--content-max`，超宽屏（≥1900px）上限 1920px 并重排网格 |
 
 ---
 
@@ -57,6 +58,15 @@
 - [x] **16 个模块豁免清空** — `backend/mypy.ini` 只剩全局段；`mypy app` 42 文件 0 错误（`warn_unreachable` 开着，绿灯不是靠降级换来的）
 - [x] **4 处真实缺陷顺带修掉** — kb `entry` 字面量类型、airflow `conf` 的 `None` 分支、feishu `code` 的 `int()` 兜底、`run_isolated` 的 `Awaitable`→`Coroutine`
 - [x] **防复发测试** — `backend/tests/test_plugin_contracts.py`：mypy.ini 不得再出现 `disable_error_code`、内核不得 import 具体插件模块、能力窄化函数接受真插件/拒绝无能力对象（测试 57 → 61）
+
+---
+
+### 全视口宽度适配 (2026-11-11，FEATURES Task 25)
+- [x] **共享宽度令牌** — `--content-max` / `--page-gutter` 成为唯一宽度来源；`.page` 加 `margin-inline: auto`，新增 `.topbar-inner` 让顶栏内容与正文逐像素对齐（顶栏背景仍整幅铺满，sticky 不变）
+- [x] **超宽断点** — 新增 `@media (min-width: 1900px)`：上限 1560→1920px、gutter 30→40px，hero 排版放大，`dashboard-columns` 侧栏加宽且 `.side-stack` 变两列，`canvas-layout` 侧栏 350→400px；统计卡 5 列 / 场景卡 4 列保持不变，避免孤儿行
+- [x] **窄屏溢出根因修复** — 响应式段的 `grid-template-columns: 1fr` 等价 `minmax(auto, 1fr)`，轨道收不到 min-content 以下，表格把整页撑宽；全部改为 `minmax(0, 1fr)`
+- [x] **两处窄屏布局补齐** — `.source-grid` 在 ≤640px 收单列（原先任何宽度都两列，≤520px 溢出）；`.card-head` 在 ≤640px 纵向堆叠（原先标题与筛选 chips 挤在一行）
+- [x] **实测覆盖** — 8 页 × 390/640/1024/2560 四档，另在 3440/1920/1899/1440/1280/980/768 复核仪表盘：对齐、无文档级横向滚动、无非预期裁切；抽屉开合与 sticky 滚动回归通过，控制台 0 error/warning
 
 ---
 
@@ -103,6 +113,34 @@
 ---
 
 ## 验证记录 🧪
+
+### 三层验收 `./scripts/verify.sh` (2026-11-11，全视口宽度适配后，用时 9s)
+```
+层 1 静态    ruff check backend scripts  → All checks passed!
+             mypy app (42 modules)       → Success: no issues
+             eslint .                    → 0 errors, 1 warning (Toast.tsx，既有项)
+             tsc -b                      → 通过
+层 2 测试    pytest -q                   → 61 passed, 1 warning in 1.62s
+             vite build                  → 794 modules，CSS 59.31 kB
+层 3 冒烟    smoke_test.py               → SMOKE OK 场景 1/2、0 失败 Run、0 死信、Demo 库未触碰
+VERIFY OK  三层全部通过
+```
+
+### 浏览器视口实测 (2026-11-11，Task 25)
+夹具：临时 iframe（媒体查询按 iframe 宽度求值，外层 `transform: scale` 只用于截图、不改布局），逐页读 `getBoundingClientRect` / `scrollWidth`；验证后夹具已删除。
+
+| 视口宽度 | `--content-max` | gutter | 顶栏↔正文对齐 | 文档横向溢出 |
+|---|---|---|---|---|
+| 3440 / 2560 | 1920px | 40px | ✅ 逐像素一致 | 无 |
+| 1920 | 1920px | 40px | ✅ | 无 |
+| 1899 / 1440 / 1280 / 1024 | 1560px | 30px | ✅ | 无 |
+| 980 / 768 | 1560px | 18px | ✅ | 无 |
+| 640 / 390 | 1560px | 12px | ✅ | 无（修复前 390px 溢出 193px） |
+
+- 8 个路由（`/`、`/canvas`、`/traces`、`/traces/:id`、`/data-sources`、`/plugins`、`/knowledge`、`/experiments`）× 390/640/1024/2560 全部通过
+- 2560 下网格实测：comparison 3×604、chart 2×910、stats-4 4×448、canvas 1424+400，均无孤儿行
+- 交互回归：Agent 抽屉开合正常（2560→540px，390→94vw 右缘贴边）；滚动 400px 后 sticky 顶栏 `top=0` 且仍与 `.page` 左边界一致；控制台仅 Vite HMR debug，0 error / 0 warning
+- 说明：`hero-glow` 装饰光晕、`pipeline-strip` 与 `json-view` 的横向滚动、`log-cell` 省略号均为既有的有意裁切，非缺陷
 
 ### 三层验收 `./scripts/verify.sh` (2026-11-10，mypy 豁免清空后，用时 9s)
 ```
